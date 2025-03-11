@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
       clientId: process.env.NYLAS_CLIENT_ID || '',
       clientSecret: process.env.NYLAS_API_KEY || '',
       code,
-      redirectUri: process.env.NYLAS_REDIRECT_URI || 'http://localhost:3000/api/nylas/callback',
+      redirectUri: process.env.NYLAS_REDIRECT_URI || 'https://friday-next-pink.vercel.app/',
     });
     
     console.log("Code exchange response:", JSON.stringify(codeExchangeResponse, null, 2));
