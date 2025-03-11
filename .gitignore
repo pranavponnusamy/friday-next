@@ -33,6 +33,7 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 .env.local
+/home/pranav/Documents/github/friday-next/src/.env.local
 
 # vercel
 .vercel
