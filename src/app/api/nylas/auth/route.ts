@@ -23,7 +23,7 @@ export async function GET() {
     // Generate the authorization URL
     const authUrl = nylas.auth.urlForOAuth2({
       clientId: clientId,
-      redirectUri: process.env.NYLAS_REDIRECT_URI || 'http://localhost:3000/api/nylas/callback',
+      redirectUri: 'https://friday-next-pink.vercel.app//api/nylas/callback',
       scope: ['email.read_only', 'email.drafts', 'calendar', 'contacts'],
     });
 
