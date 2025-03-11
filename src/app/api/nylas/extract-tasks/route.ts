@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import Nylas from 'nylas';
 import { cookies } from 'next/headers';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
@@ -24,31 +23,56 @@ const TASK_TYPES = {
   TO_DO_ITEM: 'to_do_item'
 };
 
+interface Task {
+  description: string;
+  deadline: string | null;
+  task_type: 'meeting_scheduling' | 'reminder' | 'to_do_item';
+  priority: number;
+  context: string;
+}
+
+interface TaskValidationResult {
+  valid: boolean;
+  error?: string;
+}
+
 // Simplified task validation
-function validateTask(task: any) {
+function validateTask(task: unknown): TaskValidationResult {
   // Basic structure check
   if (!task || typeof task !== 'object') {
     return { valid: false, error: 'Task must be an object' };
   }
   
+  const taskObj = task as Record<string, unknown>;
+  
   // Required fields
-  if (!task.description || typeof task.description !== 'string') {
+  if (!taskObj.description || typeof taskObj.description !== 'string') {
     return { valid: false, error: 'Task must have a description as a string' };
   }
   
   // Task type validation
-  if (!task.task_type || !Object.values(TASK_TYPES).includes(task.task_type)) {
+  if (!taskObj.task_type || !Object.values(TASK_TYPES).includes(taskObj.task_type as string)) {
     return { valid: false, error: `Task type must be one of: ${Object.values(TASK_TYPES).join(', ')}` };
   }
   
   return { valid: true };
 }
 
+interface ParsedResponse {
+  valid: boolean;
+  summary?: string;
+  tasks?: Task[];
+  error?: string;
+  rawResponse?: string;
+  hasTaskErrors?: boolean;
+  taskErrors?: string[];
+}
+
 // Parse combined summary and tasks from JSON response
-function parseCombinedResponse(responseText: string) {
+function parseCombinedResponse(responseText: string): ParsedResponse {
   try {
     // Try to parse the JSON response
-    const response = JSON.parse(responseText);
+    const response = JSON.parse(responseText) as Record<string, unknown>;
     
     // Validate summary field
     if (!response.summary || typeof response.summary !== 'string') {
@@ -69,13 +93,13 @@ function parseCombinedResponse(responseText: string) {
     }
     
     // Validate each task
-    const validTasks: any[] = [];
+    const validTasks: Task[] = [];
     const errors: string[] = [];
     
-    response.tasks.forEach((task: any, index: number) => {
+    response.tasks.forEach((task: unknown, index: number) => {
       const validation = validateTask(task);
       if (validation.valid) {
-        validTasks.push(task);
+        validTasks.push(task as Task);
       } else {
         errors.push(`Task ${index + 1}: ${validation.error}`);
       }
@@ -88,22 +112,17 @@ function parseCombinedResponse(responseText: string) {
       hasTaskErrors: errors.length > 0,
       taskErrors: errors
     };
-  } catch (error: any) {
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     return {
       valid: false,
-      error: `Failed to parse JSON: ${error.message}`,
+      error: `Failed to parse JSON: ${errorMessage}`,
       rawResponse: responseText
     };
   }
 }
 
-// Initialize Nylas with configuration
-const nylas = new Nylas({
-  apiKey: process.env.NYLAS_API_KEY || '',
-  apiUri: process.env.NYLAS_API_URI || 'https://api.us.nylas.com',
-});
-
-export async function GET(request: NextRequest) {
+export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     const cookieStore = await cookies();
     const grantId = cookieStore.get('nylasGrantId')?.value;
@@ -179,8 +198,9 @@ Format your response ONLY as valid JSON with these fields, nothing else.
         date: email.date
       }
     });
-  } catch (error: any) {
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     console.error("Error extracting tasks:", error);
-    return NextResponse.json({ error: `Failed to extract tasks: ${error.message}` }, { status: 500 });
+    return NextResponse.json({ error: `Failed to extract tasks: ${errorMessage}` }, { status: 500 });
   }
 }

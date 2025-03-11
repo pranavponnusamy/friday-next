@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 
@@ -24,7 +24,7 @@ interface TasksResponse {
   };
 }
 
-export default function TaskExtractor() {
+function TaskExtractorContent() {
   const searchParams = useSearchParams();
   const emailIndex = searchParams.get('index') || '0';
   
@@ -33,11 +33,7 @@ export default function TaskExtractor() {
   const [error, setError] = useState<string | null>(null);
   const [tasksData, setTasksData] = useState<TasksResponse | null>(null);
 
-  useEffect(() => {
-    extractTasks();
-  }, [emailIndex]);
-
-  const extractTasks = async () => {
+  const extractTasks = useCallback(async () => {
     try {
       setLoading(true);
       setExtracting(true);
@@ -52,14 +48,18 @@ export default function TaskExtractor() {
       
       const data = await response.json();
       setTasksData(data);
-    } catch (err: any) {
-      setError(err.message || 'An error occurred while extracting tasks');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred while extracting tasks');
       console.error('Error extracting tasks:', err);
     } finally {
       setLoading(false);
       setExtracting(false);
     }
-  };
+  }, [emailIndex]);
+
+  useEffect(() => {
+    extractTasks();
+  }, [extractTasks]);
 
   const formatDate = (timestamp: number) => {
     return new Date(timestamp * 1000).toLocaleString();
@@ -105,34 +105,6 @@ export default function TaskExtractor() {
     return stars;
   };
 
-  if (loading) {
-    return (
-      <div className="flex justify-center items-center min-h-screen bg-gray-50">
-        <div className="text-lg text-gray-600">
-          {extracting ? 'Extracting tasks with AI...' : 'Loading...'}
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="flex flex-col min-h-screen bg-gray-50 p-8">
-        <div className="container mx-auto max-w-4xl">
-          <div className="bg-red-50 p-6 rounded-md border border-red-200 mb-6">
-            <p className="text-red-800 mb-4">{error}</p>
-            <Link 
-              href="/email-summary"
-              className="inline-block bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-md transition-colors"
-            >
-              Return to Emails
-            </Link>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="flex flex-col min-h-screen bg-gray-50">
       <div className="container mx-auto px-4 py-8 max-w-4xl">
@@ -146,76 +118,108 @@ export default function TaskExtractor() {
           </Link>
         </div>
         
-        {tasksData && (
-          <div className="bg-white p-6 rounded-lg shadow-md">
-            <div className="email-header mb-4 p-4 bg-gray-50 rounded-md">
-              <h2 className="text-xl font-semibold mb-2">{tasksData.email.subject}</h2>
-              <p className="text-sm text-gray-600 mb-1">
-                <strong>From:</strong> {tasksData.email.from.name} &lt;{tasksData.email.from.email}&gt;
-              </p>
-              <p className="text-sm text-gray-600">
-                <strong>Date:</strong> {formatDate(tasksData.email.date)}
-              </p>
-            </div>
-            
-            <div className="summary mb-6 p-4 bg-blue-50 rounded-md">
-              <h3 className="text-lg font-semibold mb-2 text-blue-900">Summary</h3>
-              <p className="text-blue-800">{tasksData.summary}</p>
-            </div>
-            
-            <div className="tasks">
-              <h3 className="text-lg font-semibold mb-4 text-gray-800">
-                Tasks ({tasksData.tasks.length})
-              </h3>
-              
-              {tasksData.tasks.length === 0 ? (
-                <div className="p-4 bg-gray-50 rounded-md text-gray-600">
-                  No tasks were extracted from this email.
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {tasksData.tasks.map((task, index) => (
-                    <div key={index} className="p-4 border border-gray-200 rounded-md hover:shadow-md transition-shadow">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <h4 className="font-semibold text-gray-800 mb-2">{task.description}</h4>
-                          <div className="flex flex-wrap gap-2 mb-2">
-                            <span className={`inline-block px-2 py-1 text-xs rounded-full ${getTaskTypeBadgeColor(task.task_type)}`}>
-                              {getReadableTaskType(task.task_type)}
-                            </span>
-                            {task.deadline && (
-                              <span className="inline-block px-2 py-1 text-xs rounded-full bg-red-100 text-red-800">
-                                Due: {task.deadline}
-                              </span>
-                            )}
-                          </div>
-                          {task.context && (
-                            <p className="text-sm text-gray-600 mt-2">{task.context}</p>
-                          )}
-                        </div>
-                        <div className="text-amber-500 font-medium">
-                          {getPriorityStars(task.priority)}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-              
-              {tasksData.hasTaskErrors && (
-                <div className="mt-4 p-4 bg-red-50 rounded-md">
-                  <h4 className="font-semibold text-red-800 mb-2">Task Validation Errors</h4>
-                  <ul className="list-disc pl-5 text-red-700 text-sm">
-                    {tasksData.taskErrors.map((error, index) => (
-                      <li key={index}>{error}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
+        {loading ? (
+          <div className="flex justify-center items-center min-h-screen bg-gray-50">
+            <div className="text-lg text-gray-600">
+              {extracting ? 'Extracting tasks with AI...' : 'Loading...'}
             </div>
           </div>
+        ) : error ? (
+          <div className="flex flex-col min-h-screen bg-gray-50 p-8">
+            <div className="container mx-auto max-w-4xl">
+              <div className="bg-red-50 p-6 rounded-md border border-red-200 mb-6">
+                <p className="text-red-800 mb-4">{error}</p>
+                <Link 
+                  href="/email-summary"
+                  className="inline-block bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-md transition-colors"
+                >
+                  Return to Emails
+                </Link>
+              </div>
+            </div>
+          </div>
+        ) : tasksData ? (
+          <div>
+            <div className="bg-white p-6 rounded-lg shadow-md">
+              <div className="email-header mb-4 p-4 bg-gray-50 rounded-md">
+                <h2 className="text-xl font-semibold mb-2">{tasksData.email.subject}</h2>
+                <p className="text-sm text-gray-600 mb-1">
+                  <strong>From:</strong> {tasksData.email.from.name} &lt;{tasksData.email.from.email}&gt;
+                </p>
+                <p className="text-sm text-gray-600">
+                  <strong>Date:</strong> {formatDate(tasksData.email.date)}
+                </p>
+              </div>
+              
+              <div className="summary mb-6 p-4 bg-blue-50 rounded-md">
+                <h3 className="text-lg font-semibold mb-2 text-blue-900">Summary</h3>
+                <p className="text-blue-800">{tasksData.summary}</p>
+              </div>
+              
+              <div className="tasks">
+                <h3 className="text-lg font-semibold mb-4 text-gray-800">
+                  Tasks ({tasksData.tasks.length})
+                </h3>
+                
+                {tasksData.tasks.length === 0 ? (
+                  <div className="p-4 bg-gray-50 rounded-md text-gray-600">
+                    No tasks were extracted from this email.
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {tasksData.tasks.map((task, index) => (
+                      <div key={index} className="p-4 border border-gray-200 rounded-md hover:shadow-md transition-shadow">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <h4 className="font-semibold text-gray-800 mb-2">{task.description}</h4>
+                            <div className="flex flex-wrap gap-2 mb-2">
+                              <span className={`inline-block px-2 py-1 text-xs rounded-full ${getTaskTypeBadgeColor(task.task_type)}`}>
+                                {getReadableTaskType(task.task_type)}
+                              </span>
+                              {task.deadline && (
+                                <span className="inline-block px-2 py-1 text-xs rounded-full bg-red-100 text-red-800">
+                                  Due: {task.deadline}
+                                </span>
+                              )}
+                            </div>
+                            {task.context && (
+                              <p className="text-sm text-gray-600 mt-2">{task.context}</p>
+                            )}
+                          </div>
+                          <div className="text-amber-500 font-medium">
+                            {getPriorityStars(task.priority)}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                
+                {tasksData.hasTaskErrors && (
+                  <div className="mt-4 p-4 bg-red-50 rounded-md">
+                    <h4 className="font-semibold text-red-800 mb-2">Task Validation Errors</h4>
+                    <ul className="list-disc pl-5 text-red-700 text-sm">
+                      {tasksData.taskErrors.map((error, index) => (
+                        <li key={index}>{error}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <p>No data available</p>
         )}
       </div>
     </div>
+  );
+}
+
+export default function TaskExtractor() {
+  return (
+    <Suspense fallback={<div className="p-4">Loading task extractor...</div>}>
+      <TaskExtractorContent />
+    </Suspense>
   );
 }

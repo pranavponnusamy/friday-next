@@ -6,7 +6,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 // Initialize Google Generative AI
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 const model = genAI.getGenerativeModel({
-  model: "gemini-2.0-flash-lite",
+  model: "gemini-2.0-flash",
 });
 
 const generationConfig = {
@@ -41,34 +41,59 @@ interface NylasEmail {
   unread?: boolean;
   folders?: string[];
   threadId?: string;
-  [key: string]: any; // Allow for other properties from Nylas
+  [key: string]: unknown; // Allow for other properties from Nylas
+}
+
+interface Task {
+  description: string;
+  deadline: string | null;
+  task_type: 'meeting_scheduling' | 'reminder' | 'to_do_item';
+  priority: number;
+  context: string;
+}
+
+interface TaskValidationResult {
+  valid: boolean;
+  error?: string;
 }
 
 // Simplified task validation
-function validateTask(task: any) {
+function validateTask(task: unknown): TaskValidationResult {
   // Basic structure check
   if (!task || typeof task !== 'object') {
     return { valid: false, error: 'Task must be an object' };
   }
   
+  const taskObj = task as Record<string, unknown>;
+  
   // Required fields
-  if (!task.description || typeof task.description !== 'string') {
+  if (!taskObj.description || typeof taskObj.description !== 'string') {
     return { valid: false, error: 'Task must have a description as a string' };
   }
   
   // Task type validation
-  if (!task.task_type || !Object.values(TASK_TYPES).includes(task.task_type)) {
+  if (!taskObj.task_type || !Object.values(TASK_TYPES).includes(taskObj.task_type as string)) {
     return { valid: false, error: `Task type must be one of: ${Object.values(TASK_TYPES).join(', ')}` };
   }
   
   return { valid: true };
 }
 
+interface ParsedResponse {
+  valid: boolean;
+  summary?: string;
+  tasks?: Task[];
+  error?: string;
+  rawResponse?: string;
+  hasTaskErrors?: boolean;
+  taskErrors?: string[];
+}
+
 // Parse combined summary and tasks from JSON response
-function parseCombinedResponse(responseText: string) {
+function parseCombinedResponse(responseText: string): ParsedResponse {
   try {
     // Try to parse the JSON response
-    const response = JSON.parse(responseText);
+    const response = JSON.parse(responseText) as Record<string, unknown>;
     
     // Validate summary field
     if (!response.summary || typeof response.summary !== 'string') {
@@ -89,13 +114,13 @@ function parseCombinedResponse(responseText: string) {
     }
     
     // Validate each task
-    const validTasks: any[] = [];
+    const validTasks: Task[] = [];
     const errors: string[] = [];
     
-    response.tasks.forEach((task: any, index: number) => {
+    response.tasks.forEach((task: unknown, index: number) => {
       const validation = validateTask(task);
       if (validation.valid) {
-        validTasks.push(task);
+        validTasks.push(task as Task);
       } else {
         errors.push(`Task ${index + 1}: ${validation.error}`);
       }
@@ -108,10 +133,11 @@ function parseCombinedResponse(responseText: string) {
       hasTaskErrors: errors.length > 0,
       taskErrors: errors
     };
-  } catch (error: any) {
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     return {
       valid: false,
-      error: `Failed to parse JSON: ${error.message}`,
+      error: `Failed to parse JSON: ${errorMessage}`,
       rawResponse: responseText
     };
   }
@@ -193,7 +219,7 @@ export async function GET(request: NextRequest) {
         if (messagesResponse && typeof messagesResponse === 'object' && 'data' in messagesResponse) {
           const data = messagesResponse.data;
           if (Array.isArray(data)) {
-            emails = data as NylasEmail[];
+            emails = data as unknown as NylasEmail[];
             console.log(`Successfully fetched ${emails.length} emails from data property`);
           }
         } else {
@@ -201,7 +227,7 @@ export async function GET(request: NextRequest) {
           try {
             // Check if the response is iterable
             if (messagesResponse && Symbol.iterator in Object(messagesResponse)) {
-              emails = Array.from(messagesResponse as Iterable<any>) as NylasEmail[];
+              emails = Array.from(messagesResponse as Iterable<unknown>) as unknown as NylasEmail[];
               console.log(`Successfully fetched ${emails.length} emails using iteration`);
             }
           } catch (iterError) {
@@ -209,7 +235,7 @@ export async function GET(request: NextRequest) {
             
             // Last attempt - check if it's directly an array
             if (Array.isArray(messagesResponse)) {
-              emails = messagesResponse as NylasEmail[];
+              emails = messagesResponse as unknown as NylasEmail[];
               console.log(`Successfully fetched ${emails.length} emails from array response`);
             }
           }
@@ -287,12 +313,13 @@ Format your response ONLY as valid JSON with these fields, nothing else.
             currentIndex: safeIndex,
             totalEmails: emails.length
           });
-        } catch (aiError: any) {
-          console.error("AI processing error:", aiError);
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          console.error("AI processing error:", error);
           // Return the email but with an error for the AI part
           return NextResponse.json({ 
             email: email,
-            error: `AI processing failed: ${aiError.message}`,
+            error: `AI processing failed: ${errorMessage}`,
             currentIndex: safeIndex,
             totalEmails: emails.length
           }, { status: 200 }); // Still return 200 to show the email
@@ -315,8 +342,9 @@ Format your response ONLY as valid JSON with these fields, nothing else.
           isMock: true
         });
       }
-    } catch (nylasError: any) {
-      console.error("Error fetching emails from Nylas:", nylasError);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error("Error fetching emails from Nylas:", error);
       // Fallback to mock data on error
       return NextResponse.json({ 
         email: mockEmails[index % mockEmails.length],
@@ -326,15 +354,16 @@ Format your response ONLY as valid JSON with these fields, nothing else.
           deadline: "As soon as possible",
           task_type: "to_do_item",
           priority: 5,
-          context: `Error: ${nylasError.message}`
+          context: `Error: ${errorMessage}`
         }],
         currentIndex: index,
         totalEmails: mockEmails.length,
         isMock: true
       });
     }
-  } catch (error: any) {
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     console.error("Unhandled error in process-email route:", error);
-    return NextResponse.json({ error: `Failed to process email: ${error.message}` }, { status: 500 });
+    return NextResponse.json({ error: `Failed to process email: ${errorMessage}` }, { status: 500 });
   }
 }

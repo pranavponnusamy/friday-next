@@ -57,8 +57,9 @@ export async function GET(request: NextRequest) {
     
     // Redirect to the homepage
     return NextResponse.redirect(new URL('/', request.url));
-  } catch (error: any) {
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     console.error("Error in Nylas callback:", error);
-    return NextResponse.json({ error: `Authentication failed: ${error.message}` }, { status: 500 });
+    return NextResponse.json({ error: `Authentication failed: ${errorMessage}` }, { status: 500 });
   }
 }

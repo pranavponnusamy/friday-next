@@ -2,6 +2,20 @@ import { NextRequest, NextResponse } from 'next/server';
 import Nylas from 'nylas';
 import { cookies } from 'next/headers';
 
+// Define email interface to improve type safety
+interface NylasEmail {
+  id: string;
+  subject: string;
+  from: { email: string; name: string }[];
+  date: number;
+  body: string;
+  starred?: boolean;
+  unread?: boolean;
+  folders?: string[];
+  threadId?: string;
+  [key: string]: unknown; // Allow for other properties from Nylas
+}
+
 // Initialize Nylas with configuration
 const nylas = new Nylas({
   apiKey: process.env.NYLAS_API_KEY || '',
@@ -22,7 +36,7 @@ export async function GET(request: NextRequest) {
     // Use the Nylas SDK to fetch emails, just like in the Express app
     try {
       // First try to use the SDK to fetch emails
-      let emails = [];
+      let emails: NylasEmail[] = [];
       
       // Using a more TypeScript-friendly approach for handling async responses
       try {
@@ -34,8 +48,8 @@ export async function GET(request: NextRequest) {
         });
         
         // Check if it's a paginated response with data property
-        if (messagesResponse && 'data' in messagesResponse) {
-          emails = messagesResponse.data;
+        if (messagesResponse && typeof messagesResponse === 'object' && 'data' in messagesResponse) {
+          emails = messagesResponse.data as unknown as NylasEmail[];
           console.log(`Successfully fetched ${emails.length} emails from data property`);
           
           // Print out the first email for debugging
@@ -45,13 +59,13 @@ export async function GET(request: NextRequest) {
           }
         } else {
           // Try to handle it as an async iterable manually
-          const tempEmails: any[] = [];
+          const tempEmails: NylasEmail[] = [];
           
           // Using a try-catch to handle potential iterator issues
           try {
-            // @ts-ignore - Working around TypeScript errors with the iterator
+            // @ts-expect-error - Working around TypeScript errors with the iterator
             for await (const message of messagesResponse) {
-              tempEmails.push(message);
+              tempEmails.push(message as unknown as NylasEmail);
             }
             
             if (tempEmails.length > 0) {
@@ -67,7 +81,7 @@ export async function GET(request: NextRequest) {
             
             // Last attempt - check if it's directly an array
             if (Array.isArray(messagesResponse)) {
-              emails = messagesResponse;
+              emails = messagesResponse as unknown as NylasEmail[];
               console.log(`Successfully fetched ${emails.length} emails from array response`);
               
               // Print out the first email for debugging
@@ -112,61 +126,45 @@ export async function GET(request: NextRequest) {
         currentIndex: emailIndex,
         totalEmails: emails.length
       });
-    } catch (apiError: any) {
-      console.error("Error calling Nylas API:", apiError);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error("Error calling Nylas API:", error);
       
       // Fallback to mock emails if we can't get real emails
       const mockEmails = [
         {
           id: '1',
-          subject: 'Meeting Tomorrow at 2pm',
-          from: [{ name: 'John Doe', email: 'john@example.com' }],
-          date: Math.floor(Date.now() / 1000),
-          body: `Hi there,\n\nLet's have a meeting tomorrow at 2pm to discuss the project timeline. Please prepare a status update.\n\nBest regards,\nJohn`
+          subject: 'Welcome to the Email Summary App',
+          from: [{ email: 'demo@example.com', name: 'Demo User' }],
+          date: Date.now() / 1000,
+          body: '<p>This is a mock email because we could not fetch your real emails. Please check your Nylas authentication.</p>'
         },
         {
           id: '2',
-          subject: 'Action Items from Yesterday',
-          from: [{ name: 'Alice Smith', email: 'alice@example.com' }],
-          date: Math.floor(Date.now() / 1000) - 86400,
-          body: `Hello,\n\nFollowing up on our discussion yesterday, here are the action items:\n\n1. Submit the quarterly report by Friday\n2. Schedule a call with the client next week\n3. Review the marketing materials\n\nThanks,\nAlice`
-        },
-        {
-          id: '3',
-          subject: 'Reminder: Team Lunch',
-          from: [{ name: 'Bob Johnson', email: 'bob@example.com' }],
-          date: Math.floor(Date.now() / 1000) - 43200,
-          body: `Team,\n\nJust a reminder that we have our team lunch tomorrow at 12pm at the Italian restaurant.\n\nSee you all there!\nBob`
+          subject: 'How to Use This App',
+          from: [{ email: 'support@example.com', name: 'Support Team' }],
+          date: Date.now() / 1000,
+          body: '<p>Navigate through your emails using the Next and Previous buttons. The AI will summarize each email for you.</p>'
         }
       ];
       
-      // Print out the first mock email for debugging
-      console.log("Using mock email data. Sample email:");
-      console.log(JSON.stringify(mockEmails[0], null, 2));
-      
-      // Store mock emails in cookies for future use
-      cookieStore.set('cachedEmails', JSON.stringify(mockEmails), { 
-        path: '/',
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        maxAge: 60 * 60 * 1 // 1 hour
-      });
-      
-      // Get the email index from the query params
+      // Get the email index from the query params, defaulting to 0
       const searchParams = request.nextUrl.searchParams;
       const emailIndex = parseInt(searchParams.get('index') || '0', 10);
+      const safeIndex = emailIndex % mockEmails.length;
       
-      // Return the mock email data
+      // Return a mock email with an error message
       return NextResponse.json({
-        email: mockEmails[emailIndex],
-        currentIndex: emailIndex,
+        email: mockEmails[safeIndex],
+        error: `Failed to fetch emails: ${errorMessage}`,
+        currentIndex: safeIndex,
         totalEmails: mockEmails.length,
-        isMock: true,
-        apiError: apiError.message
+        isMock: true
       });
     }
-  } catch (error: any) {
-    console.error("Error in email summary:", error);
-    return NextResponse.json({ error: `Failed to fetch emails: ${error.message}` }, { status: 500 });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error("Unhandled error in email-summary API route:", error);
+    return NextResponse.json({ error: `Failed to retrieve emails: ${errorMessage}` }, { status: 500 });
   }
 }

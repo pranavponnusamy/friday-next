@@ -85,9 +85,9 @@ export default function EmailSummary() {
       if (!isPrefetch) {
         setEmailData(data);
       }
-    } catch (err: any) {
+    } catch (err) {
       if (!isPrefetch) {
-        setError(err.message || 'An error occurred while fetching email data');
+        setError(err instanceof Error ? err.message : 'An error occurred while fetching email data');
       }
       console.error(`Error ${isPrefetch ? 'prefetching' : 'fetching'} processed email:`, err);
     } finally {
