@@ -1,0 +1,363 @@
+'use client';
+
+import { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
+
+interface EmailData {
+  id: string;
+  subject: string;
+  from: { email: string; name: string }[];
+  date: number;
+  body: string;
+  starred?: boolean;
+  unread?: boolean;
+  folders?: string[];
+  threadId?: string;
+}
+
+interface Task {
+  description: string;
+  deadline: string | null;
+  task_type: 'meeting_scheduling' | 'reminder' | 'to_do_item';
+  priority: number;
+  context: string;
+}
+
+interface ProcessedEmailResponse {
+  email: EmailData;
+  summary: string;
+  tasks: Task[];
+  currentIndex: number;
+  totalEmails: number;
+  isMock?: boolean;
+  error?: string;
+  hasTaskErrors?: boolean;
+  taskErrors?: string[];
+}
+
+export default function EmailSummary() {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [emailData, setEmailData] = useState<ProcessedEmailResponse | null>(null);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [expandedView, setExpandedView] = useState(false);
+  const [cachedEmails, setCachedEmails] = useState<Record<number, ProcessedEmailResponse>>({});
+  const [prefetchingNext, setPrefetchingNext] = useState(false);
+
+  // Memoized fetch function to avoid recreation on each render
+  const fetchProcessedEmail = useCallback(async (index: number, isPrefetch: boolean = false) => {
+    try {
+      if (!isPrefetch) {
+        setLoading(true);
+      } else {
+        setPrefetchingNext(true);
+      }
+      
+      setError(null);
+      
+      console.log(`${isPrefetch ? 'Prefetching' : 'Fetching'} processed email for index ${index}...`);
+      
+      // Check if we already have this email in the cache
+      if (cachedEmails[index]) {
+        console.log(`Using cached email for index ${index}`);
+        if (!isPrefetch) {
+          setEmailData(cachedEmails[index]);
+          setLoading(false);
+        } else {
+          setPrefetchingNext(false);
+        }
+        return;
+      }
+      
+      const response = await fetch(`/api/nylas/process-email?index=${index}`);
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to fetch email data');
+      }
+      
+      const data = await response.json();
+      console.log(`${isPrefetch ? 'Prefetched' : 'Fetched'} email data received for index ${index}:`, data);
+      
+      // Add to cache
+      setCachedEmails(prev => ({ ...prev, [index]: data }));
+      
+      if (!isPrefetch) {
+        setEmailData(data);
+      }
+    } catch (err: any) {
+      if (!isPrefetch) {
+        setError(err.message || 'An error occurred while fetching email data');
+      }
+      console.error(`Error ${isPrefetch ? 'prefetching' : 'fetching'} processed email:`, err);
+    } finally {
+      if (!isPrefetch) {
+        setLoading(false);
+      } else {
+        setPrefetchingNext(false);
+      }
+    }
+  }, [cachedEmails]);
+
+  // Prefetch the next email when the current one loads
+  useEffect(() => {
+    if (emailData && currentIndex < emailData.totalEmails - 1) {
+      fetchProcessedEmail(currentIndex + 1, true);
+    }
+    
+    // If we're not at the beginning, also prefetch the previous email
+    if (emailData && currentIndex > 0 && !cachedEmails[currentIndex - 1]) {
+      fetchProcessedEmail(currentIndex - 1, true);
+    }
+  }, [emailData, currentIndex, fetchProcessedEmail, cachedEmails]);
+
+  // Initial load
+  useEffect(() => {
+    const loadInitialEmails = async () => {
+      // Load current email
+      await fetchProcessedEmail(currentIndex);
+      
+      // After the current email loads, prefetch the next one (if there is one)
+      if (emailData && currentIndex < emailData.totalEmails - 1) {
+        fetchProcessedEmail(currentIndex + 1, true);
+      }
+    };
+    
+    loadInitialEmails();
+  }, [currentIndex, fetchProcessedEmail, emailData]);
+
+  const handlePrevious = () => {
+    if (currentIndex > 0) {
+      setCurrentIndex(currentIndex - 1);
+    }
+  };
+
+  const handleNext = () => {
+    if (emailData && currentIndex < emailData.totalEmails - 1) {
+      setCurrentIndex(currentIndex + 1);
+    }
+  };
+
+  const formatDate = (timestamp: number) => {
+    return new Date(timestamp * 1000).toLocaleString();
+  };
+
+  // Get the priority color for tasks
+  const getPriorityColor = (priority: number) => {
+    switch(priority) {
+      case 5: return 'bg-red-100 text-red-800 border-red-300';
+      case 4: return 'bg-orange-100 text-orange-800 border-orange-300';
+      case 3: return 'bg-yellow-100 text-yellow-800 border-yellow-300';
+      case 2: return 'bg-blue-100 text-blue-800 border-blue-300';
+      case 1: 
+      default: return 'bg-green-100 text-green-800 border-green-300';
+    }
+  };
+
+  // Get task type icon
+  const getTaskTypeIcon = (type: string) => {
+    switch(type) {
+      case 'meeting_scheduling': return '📅';
+      case 'reminder': return '⏰';
+      case 'to_do_item': 
+      default: return '✓';
+    }
+  };
+
+  // Format the email body for display
+  const formatEmailBody = (body: string): { __html: string } => {
+    if (!body) return { __html: '' };
+    
+    // Check if it's already HTML (contains HTML tags)
+    const hasHtmlTags = /<[a-z][\s\S]*>/i.test(body);
+    
+    if (hasHtmlTags) {
+      return { __html: body };
+    } else {
+      // Convert plain text to HTML with line breaks
+      const textWithBreaks = body.replace(/\n/g, '<br />');
+      return { __html: textWithBreaks };
+    }
+  };
+
+  if (loading && !emailData) {
+    return (
+      <div className="flex justify-center items-center min-h-screen bg-gray-50">
+        <div className="text-lg text-blue-700">Loading email insights...</div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col min-h-screen bg-gray-50 p-8">
+        <div className="container mx-auto max-w-4xl">
+          <div className="bg-red-50 p-6 rounded-md border border-red-200 mb-6">
+            <p className="text-red-800 mb-4">{error}</p>
+            <Link 
+              href="/"
+              className="inline-block bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-md transition-colors"
+            >
+              Return to Home
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col min-h-screen bg-gray-50">
+      <div className="container mx-auto px-4 py-8 max-w-4xl">
+        <div className="flex justify-between items-center mb-6">
+          <h1 className="text-2xl font-bold text-gray-800">Email Insights</h1>
+          <Link 
+            href="/"
+            className="text-blue-600 hover:text-blue-800 underline"
+          >
+            Return to Home
+          </Link>
+        </div>
+        
+        {emailData && (
+          <div className="space-y-6">
+            {emailData.isMock && (
+              <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4">
+                <p className="text-yellow-700">
+                  <strong>Note:</strong> Displaying sample data. Could not connect to your email account.
+                </p>
+              </div>
+            )}
+            
+            {emailData.error && (
+              <div className="bg-orange-50 border-l-4 border-orange-400 p-4">
+                <p className="text-orange-700">
+                  <strong>Processing Note:</strong> {emailData.error}
+                </p>
+              </div>
+            )}
+            
+            <div className="bg-white p-6 rounded-lg shadow-md">
+              <div className="flex justify-between items-center mb-4">
+                <div>
+                  <p className="text-sm text-blue-700 font-medium">
+                    Viewing email {emailData.currentIndex + 1} of {emailData.totalEmails}
+                  </p>
+                </div>
+                <div className="flex space-x-2">
+                  <button
+                    onClick={handlePrevious}
+                    disabled={currentIndex === 0}
+                    className={`px-4 py-2 rounded-md text-sm ${
+                      currentIndex === 0
+                        ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                        : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+                    }`}
+                  >
+                    Previous
+                  </button>
+                  <button
+                    onClick={handleNext}
+                    disabled={currentIndex >= emailData.totalEmails - 1}
+                    className={`px-4 py-2 rounded-md text-sm flex items-center ${
+                      currentIndex >= emailData.totalEmails - 1
+                        ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                        : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+                    }`}
+                  >
+                    Next
+                    {prefetchingNext && currentIndex < emailData.totalEmails - 1 && (
+                      <span className="ml-2 inline-block h-3 w-3 rounded-full border-2 border-b-transparent border-blue-700 animate-spin"></span>
+                    )}
+                  </button>
+                </div>
+              </div>
+              
+              <div className="email-header mb-4 p-4 bg-blue-50 rounded-md">
+                <h2 className="text-xl font-semibold mb-2 text-blue-900">{emailData.email.subject}</h2>
+                <p className="text-sm text-blue-800 mb-1">
+                  <strong>From:</strong> {emailData.email.from && emailData.email.from[0] ? 
+                    `${emailData.email.from[0].name || 'Unknown'} <${emailData.email.from[0].email || 'unknown@example.com'}>` : 
+                    'Unknown Sender'}
+                </p>
+                <p className="text-sm text-blue-800">
+                  <strong>Date:</strong> {emailData.email.date ? formatDate(emailData.email.date) : 'Unknown Date'}
+                </p>
+              </div>
+              
+              {/* Email Summary Section */}
+              <div className="mb-6">
+                <h3 className="text-lg font-semibold mb-2 text-blue-900">Summary</h3>
+                <div className="p-4 bg-blue-50 rounded-md text-blue-900 border border-blue-100">
+                  {emailData.summary ? (
+                    <p>{emailData.summary}</p>
+                  ) : (
+                    <p className="text-red-600 italic">No summary available</p>
+                  )}
+                </div>
+              </div>
+              
+              {/* Tasks Section */}
+              <div className="mb-6">
+                <h3 className="text-lg font-semibold mb-2 text-blue-900">Tasks</h3>
+                {emailData.tasks && emailData.tasks.length > 0 ? (
+                  <ul className="space-y-3">
+                    {emailData.tasks.map((task, idx) => (
+                      <li key={idx} className="border rounded-md p-3 bg-white">
+                        <div className="flex items-start">
+                          <div className="mr-3 text-xl">{getTaskTypeIcon(task.task_type)}</div>
+                          <div className="flex-1">
+                            <p className="font-medium text-blue-900">{task.description}</p>
+                            <div className="flex flex-wrap gap-2 mt-2">
+                              {task.deadline && (
+                                <span className="px-2 py-1 text-xs bg-purple-100 text-purple-800 rounded border border-purple-300 font-medium">
+                                  Due: {task.deadline}
+                                </span>
+                              )}
+                              <span className={`px-2 py-1 text-xs rounded border ${getPriorityColor(task.priority)} font-medium`}>
+                                Priority: {task.priority}
+                              </span>
+                              {task.context && (
+                                <span className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded border border-blue-300 font-medium">
+                                  {task.context}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-red-600 italic p-4 border border-red-200 rounded-md">
+                    No tasks identified in this email
+                  </p>
+                )}
+              </div>
+              
+              {/* Show/Hide Original Email Toggle */}
+              <div className="border-t pt-4">
+                <button 
+                  onClick={() => setExpandedView(!expandedView)}
+                  className="text-blue-600 hover:text-blue-800 text-sm underline focus:outline-none font-medium"
+                >
+                  {expandedView ? 'Hide original email' : 'Show original email'}
+                </button>
+                
+                {expandedView && (
+                  <div className="mt-4 p-4 border border-blue-200 rounded-md bg-white overflow-auto max-h-96">
+                    {emailData.email.body ? (
+                      <div className="text-blue-900" dangerouslySetInnerHTML={formatEmailBody(emailData.email.body)} />
+                    ) : (
+                      <p className="text-red-600 italic">No email content available</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
