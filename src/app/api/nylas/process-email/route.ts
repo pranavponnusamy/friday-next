@@ -202,7 +202,7 @@ async function fetchEmailsFromNylas(grantId: string): Promise<NylasEmail[]> {
     const messagesResponse = await nylas.messages.list({
       identifier: grantId,
       queryParams: {
-        limit: 10,
+        limit: 100,
       },
     });
     
