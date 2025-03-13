@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
+import CalendarTaskManager from '../components/CalendarTaskManager';
 
 interface EmailData {
   id: string;
@@ -43,6 +44,14 @@ export default function EmailSummary() {
   const [expandedView, setExpandedView] = useState(false);
   const [cachedEmails, setCachedEmails] = useState<Record<number, ProcessedEmailResponse>>({});
   const [prefetchingNext, setPrefetchingNext] = useState(false);
+
+  // State for managing calendar functionality
+  const [selectedCalendarId, setSelectedCalendarId] = useState<string>('');
+  const [calendars, setCalendars] = useState<any[]>([]);
+  const [calendarLoading, setCalendarLoading] = useState(true);
+  const [addingTaskIds, setAddingTaskIds] = useState<Set<number>>(new Set());
+  const [calendarError, setCalendarError] = useState<string | null>(null);
+  const [calendarSuccess, setCalendarSuccess] = useState<string | null>(null);
 
   // Memoized fetch function to avoid recreation on each render
   const fetchProcessedEmail = useCallback(async (index: number, isPrefetch: boolean = false) => {
@@ -180,6 +189,156 @@ export default function EmailSummary() {
     }
   };
 
+  // Function to add a task to calendar
+  const handleAddTaskToCalendar = async (task: Task, taskIndex: number) => {
+    if (!selectedCalendarId) {
+      setCalendarError('Please select a calendar first');
+      return;
+    }
+    
+    try {
+      // Mark this task as being added
+      setAddingTaskIds(prev => new Set([...prev, taskIndex]));
+      setCalendarError(null);
+      setCalendarSuccess(null);
+      
+      const response = await fetch('/api/nylas/create-calendar-event', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          task,
+          calendarId: selectedCalendarId,
+        }),
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to create calendar event');
+      }
+      
+      const data = await response.json();
+      setCalendarSuccess(`Task "${task.description}" added to calendar successfully!`);
+      
+      // Clear success message after 3 seconds
+      setTimeout(() => {
+        setCalendarSuccess(null);
+      }, 3000);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to add task to calendar';
+      setCalendarError(errorMessage);
+    } finally {
+      // Remove this task from the loading state
+      setAddingTaskIds(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(taskIndex);
+        return newSet;
+      });
+    }
+  };
+
+  // Fetch available calendars
+  useEffect(() => {
+    const fetchCalendars = async () => {
+      try {
+        setCalendarLoading(true);
+        setCalendarError(null);
+        
+        const response = await fetch('/api/nylas/list-calendars');
+        
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'Failed to fetch calendars');
+        }
+        
+        const data = await response.json();
+        
+        if (data.calendars && Array.isArray(data.calendars)) {
+          setCalendars(data.calendars);
+          // Auto-select the first calendar if available
+          if (data.calendars.length > 0 && data.calendars.some(cal => !cal.read_only)) {
+            // Find first non-read-only calendar
+            const firstWritableCalendar = data.calendars.find((cal: any) => !cal.read_only);
+            if (firstWritableCalendar) {
+              setSelectedCalendarId(firstWritableCalendar.id);
+            } else {
+              setSelectedCalendarId(data.calendars[0].id);
+            }
+          }
+        } else {
+          setCalendars([]);
+        }
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'Failed to fetch calendars';
+        setCalendarError(errorMessage);
+      } finally {
+        setCalendarLoading(false);
+      }
+    };
+    
+    if (emailData?.tasks && emailData.tasks.length > 0) {
+      fetchCalendars();
+    }
+  }, [emailData]);
+
+  // Display task section
+  const renderTasks = () => {
+    if (!emailData?.tasks || emailData.tasks.length === 0) {
+      return (
+        <div className="p-4 bg-gray-50 border border-gray-200 rounded-md">
+          <p className="text-gray-600">No tasks were extracted from this email.</p>
+        </div>
+      );
+    }
+    
+    return (
+      <div className="space-y-4">
+        {emailData.tasks.map((task, idx) => (
+          <div key={idx} className="bg-white p-4 border border-gray-200 rounded-md shadow-sm hover:shadow-md transition-shadow">
+            <div className="flex justify-between items-start">
+              <div className="flex-grow">
+                <div className="flex justify-between">
+                  <h3 className="text-lg font-semibold text-gray-800 mb-1">{task.description}</h3>
+                  <span className={`${getPriorityColor(task.priority)} px-2 py-1 text-xs rounded-md font-medium`}>
+                    Priority: {task.priority}
+                  </span>
+                </div>
+                
+                <div className="flex flex-wrap gap-2 mb-2">
+                  <span className="inline-flex items-center px-2 py-1 text-xs rounded-full bg-blue-100 text-blue-800">
+                    {getTaskTypeIcon(task.task_type)} {task.task_type.replace(/_/g, ' ')}
+                  </span>
+                  {task.deadline && (
+                    <span className="inline-flex items-center px-2 py-1 text-xs rounded-full bg-red-100 text-red-800">
+                      Due: {task.deadline}
+                    </span>
+                  )}
+                </div>
+                
+                {task.context && (
+                  <p className="text-sm text-gray-600 mt-1 mb-3">{task.context}</p>
+                )}
+                
+                <button
+                  className={`px-3 py-1.5 rounded-md text-sm font-medium ${
+                    addingTaskIds.has(idx) 
+                      ? 'bg-gray-300 text-gray-700 cursor-not-allowed' 
+                      : 'bg-blue-600 hover:bg-blue-700 text-white'
+                  }`}
+                  onClick={() => handleAddTaskToCalendar(task, idx)}
+                  disabled={addingTaskIds.has(idx) || calendarLoading || calendars.length === 0}
+                >
+                  {addingTaskIds.has(idx) ? 'Adding...' : 'Add to Calendar'}
+                </button>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   if (loading && !emailData) {
     return (
       <div className="flex justify-center items-center min-h-screen bg-gray-50">
@@ -220,119 +379,125 @@ export default function EmailSummary() {
         </div>
         
         {emailData && (
-          <div className="space-y-6">
-            {emailData.isMock && (
-              <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4">
-                <p className="text-yellow-700">
-                  <strong>Note:</strong> Displaying sample data. Could not connect to your email account.
-                </p>
-              </div>
-            )}
-            
-            {emailData.error && (
-              <div className="bg-orange-50 border-l-4 border-orange-400 p-4">
-                <p className="text-orange-700">
-                  <strong>Processing Note:</strong> {emailData.error}
-                </p>
-              </div>
-            )}
-            
-            <div className="bg-white p-6 rounded-lg shadow-md">
-              <div className="flex justify-between items-center mb-4">
-                <div>
-                  <p className="text-sm text-blue-700 font-medium">
-                    Viewing email {emailData.currentIndex + 1} of {emailData.totalEmails}
-                  </p>
+          <div className="bg-white shadow-md rounded-lg overflow-hidden">
+            {/* Email Header */}
+            <div className="border-b border-gray-200 p-6 bg-gray-50">
+              <h2 className="text-xl font-semibold mb-2">{emailData.email.subject}</h2>
+              <p className="text-gray-600 mb-1">
+                <strong>From:</strong> {emailData.email.from[0].name} &lt;{emailData.email.from[0].email}&gt;
+              </p>
+              <p className="text-gray-600">
+                <strong>Date:</strong> {formatDate(emailData.email.date)}
+              </p>
+              
+              {/* Email progress indicator */}
+              <div className="mt-4">
+                <div className="flex justify-between text-sm text-gray-500 mb-1">
+                  <span>Email {emailData.currentIndex + 1} of {emailData.totalEmails}</span>
+                  <span>{Math.round(((emailData.currentIndex + 1) / emailData.totalEmails) * 100)}%</span>
                 </div>
-                <div className="flex space-x-2">
-                  <button
-                    onClick={handlePrevious}
-                    disabled={currentIndex === 0}
-                    className={`px-4 py-2 rounded-md text-sm ${
-                      currentIndex === 0
-                        ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
-                        : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
-                    }`}
-                  >
-                    Previous
-                  </button>
-                  <button
-                    onClick={handleNext}
-                    disabled={currentIndex >= emailData.totalEmails - 1}
-                    className={`px-4 py-2 rounded-md text-sm flex items-center ${
-                      currentIndex >= emailData.totalEmails - 1
-                        ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
-                        : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
-                    }`}
-                  >
-                    Next
-                    {prefetchingNext && currentIndex < emailData.totalEmails - 1 && (
-                      <span className="ml-2 inline-block h-3 w-3 rounded-full border-2 border-b-transparent border-blue-700 animate-spin"></span>
-                    )}
-                  </button>
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div 
+                    className="bg-blue-600 h-2 rounded-full" 
+                    style={{ width: `${((emailData.currentIndex + 1) / emailData.totalEmails) * 100}%` }}
+                  ></div>
                 </div>
               </div>
               
-              <div className="email-header mb-4 p-4 bg-blue-50 rounded-md">
-                <h2 className="text-xl font-semibold mb-2 text-blue-900">{emailData.email.subject}</h2>
-                <p className="text-sm text-blue-800 mb-1">
-                  <strong>From:</strong> {emailData.email.from && emailData.email.from[0] ? 
-                    `${emailData.email.from[0].name || 'Unknown'} <${emailData.email.from[0].email || 'unknown@example.com'}>` : 
-                    'Unknown Sender'}
-                </p>
-                <p className="text-sm text-blue-800">
-                  <strong>Date:</strong> {emailData.email.date ? formatDate(emailData.email.date) : 'Unknown Date'}
-                </p>
+              {/* Navigation buttons */}
+              <div className="flex justify-end mt-4 space-x-2">
+                <button
+                  onClick={handlePrevious}
+                  disabled={currentIndex === 0}
+                  className={`px-4 py-2 rounded-md text-sm ${
+                    currentIndex === 0
+                      ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                      : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+                  }`}
+                >
+                  Previous
+                </button>
+                <button
+                  onClick={handleNext}
+                  disabled={currentIndex >= emailData.totalEmails - 1}
+                  className={`px-4 py-2 rounded-md text-sm flex items-center ${
+                    currentIndex >= emailData.totalEmails - 1
+                      ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                      : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+                  }`}
+                >
+                  Next
+                  {prefetchingNext && currentIndex < emailData.totalEmails - 1 && (
+                    <span className="ml-2 inline-block h-3 w-3 rounded-full border-2 border-b-transparent border-blue-700 animate-spin"></span>
+                  )}
+                </button>
               </div>
-              
-              {/* Email Summary Section */}
+
+            </div>
+            
+            {/* Calendar Selection */}
+            {emailData.tasks && emailData.tasks.length > 0 && (
+              <div className="px-6 pt-4">
+                <div className="p-4 border border-gray-200 rounded-md bg-gray-50 mb-4">
+                  <h3 className="text-lg font-semibold mb-3 text-gray-800">Calendar Selection</h3>
+                  
+                  {calendarLoading ? (
+                    <div className="text-gray-600">Loading calendars...</div>
+                  ) : calendars.length === 0 ? (
+                    <div className="text-red-600">
+                      No calendars available. Make sure your Nylas account is connected.
+                    </div>
+                  ) : (
+                    <>
+                      <div className="mb-3">
+                        <label htmlFor="calendar-select" className="block text-sm font-medium text-gray-700 mb-1">
+                          Select Calendar for All Tasks
+                        </label>
+                        <select
+                          id="calendar-select"
+                          className="block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 bg-white"
+                          value={selectedCalendarId}
+                          onChange={(e) => setSelectedCalendarId(e.target.value)}
+                        >
+                          {calendars.map((calendar) => (
+                            <option key={calendar.id} value={calendar.id} disabled={calendar.read_only}>
+                              {calendar.name} {calendar.read_only ? '(Read Only)' : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      
+                      {calendarError && (
+                        <div className="mb-3 p-2 bg-red-50 text-red-700 rounded-md border border-red-200">
+                          {calendarError}
+                        </div>
+                      )}
+                      
+                      {calendarSuccess && (
+                        <div className="mb-3 p-2 bg-green-50 text-green-700 rounded-md border border-green-200">
+                          {calendarSuccess}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+            
+            {/* Email content sections */}
+            <div className="p-6">
+              {/* AI Summary */}
               <div className="mb-6">
                 <h3 className="text-lg font-semibold mb-2 text-blue-900">Summary</h3>
-                <div className="p-4 bg-blue-50 rounded-md text-blue-900 border border-blue-100">
-                  {emailData.summary ? (
-                    <p>{emailData.summary}</p>
-                  ) : (
-                    <p className="text-red-600 italic">No summary available</p>
-                  )}
+                <div className="p-4 bg-blue-50 border border-blue-100 rounded-md">
+                  <p className="text-blue-800">{emailData.summary}</p>
                 </div>
               </div>
               
               {/* Tasks Section */}
               <div className="mb-6">
                 <h3 className="text-lg font-semibold mb-2 text-blue-900">Tasks</h3>
-                {emailData.tasks && emailData.tasks.length > 0 ? (
-                  <ul className="space-y-3">
-                    {emailData.tasks.map((task, idx) => (
-                      <li key={idx} className="border rounded-md p-3 bg-white">
-                        <div className="flex items-start">
-                          <div className="mr-3 text-xl">{getTaskTypeIcon(task.task_type)}</div>
-                          <div className="flex-1">
-                            <p className="font-medium text-blue-900">{task.description}</p>
-                            <div className="flex flex-wrap gap-2 mt-2">
-                              {task.deadline && (
-                                <span className="px-2 py-1 text-xs bg-purple-100 text-purple-800 rounded border border-purple-300 font-medium">
-                                  Due: {task.deadline}
-                                </span>
-                              )}
-                              <span className={`px-2 py-1 text-xs rounded border ${getPriorityColor(task.priority)} font-medium`}>
-                                Priority: {task.priority}
-                              </span>
-                              {task.context && (
-                                <span className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded border border-blue-300 font-medium">
-                                  {task.context}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="text-red-600 italic p-4 border border-red-200 rounded-md">
-                    No tasks identified in this email
-                  </p>
-                )}
+                {renderTasks()}
               </div>
               
               {/* Show/Hide Original Email Toggle */}

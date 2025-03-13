@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
+import TaskCalendarScheduler from '../components/TaskCalendarScheduler';
 
 interface Task {
   description: string;
@@ -36,6 +37,27 @@ function TaskExtractorContent() {
   const extractTasks = useCallback(async () => {
     try {
       setLoading(true);
+      
+      // Check if we have this email already processed in localStorage
+      const cachedTasksStr = localStorage.getItem('processedEmailTasks');
+      const cachedTasks = cachedTasksStr ? JSON.parse(cachedTasksStr) : {};
+      
+      // Get the cached emails to find the current email ID
+      const cachedEmailsStr = localStorage.getItem('cachedEmails');
+      const cachedEmails = cachedEmailsStr ? JSON.parse(cachedEmailsStr) : [];
+      
+      const currentEmail = cachedEmails[parseInt(emailIndex, 10)];
+      const emailId = currentEmail?.id;
+      
+      // If we have a valid email ID and it's in our cache, use the cached result
+      if (emailId && cachedTasks[emailId]) {
+        console.log(`Using cached task data for email ID: ${emailId}`);
+        setTasksData(cachedTasks[emailId]);
+        setLoading(false);
+        return;
+      }
+      
+      // If not in cache, proceed with API call
       setExtracting(true);
       setError(null);
       
@@ -48,6 +70,14 @@ function TaskExtractorContent() {
       
       const data = await response.json();
       setTasksData(data);
+      
+      // Cache the result if we have a valid email ID
+      if (emailId) {
+        // Update cache
+        cachedTasks[emailId] = data;
+        localStorage.setItem('processedEmailTasks', JSON.stringify(cachedTasks));
+        console.log(`Cached task data for email ID: ${emailId}`);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred while extracting tasks');
       console.error('Error extracting tasks:', err);
@@ -185,6 +215,20 @@ function TaskExtractorContent() {
                             {task.context && (
                               <p className="text-sm text-gray-600 mt-2">{task.context}</p>
                             )}
+                            
+                            <TaskCalendarScheduler 
+                              task={{
+                                ...task,
+                                task_type: task.task_type as 'meeting_scheduling' | 'reminder' | 'to_do_item'
+                              }}
+                              onSuccess={(message) => {
+                                // Could add toast notification here
+                                console.log(message);
+                              }}
+                              onError={(error) => {
+                                console.error(error);
+                              }}
+                            />
                           </div>
                           <div className="text-amber-500 font-medium">
                             {getPriorityStars(task.priority)}

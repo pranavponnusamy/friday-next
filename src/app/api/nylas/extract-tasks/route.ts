@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 // Initialize Google Generative AI
@@ -124,8 +123,20 @@ function parseCombinedResponse(responseText: string): ParsedResponse {
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
-    const cookieStore = await cookies();
-    const grantId = cookieStore.get('nylasGrantId')?.value;
+    // Get cookies directly from the request headers
+    const cookieHeader = request.headers.get('cookie') || '';
+    const cookiePairs = cookieHeader.split(';').map(pair => pair.trim());
+    
+    // Parse cookies manually
+    const cookieMap: Record<string, string> = {};
+    cookiePairs.forEach(pair => {
+      const [key, value] = pair.split('=');
+      if (key && value) {
+        cookieMap[key] = decodeURIComponent(value);
+      }
+    });
+    
+    const grantId = cookieMap['nylasGrantId'];
     
     if (!grantId) {
       return NextResponse.json({ error: 'Not authenticated with Nylas' }, { status: 401 });
@@ -136,7 +147,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const emailIndex = parseInt(searchParams.get('index') || '0', 10);
     
     // Get the emails from the cookies
-    const cachedEmailsStr = cookieStore.get('cachedEmails')?.value;
+    const cachedEmailsStr = cookieMap['cachedEmails'];
     const cachedEmails = cachedEmailsStr ? JSON.parse(cachedEmailsStr) : [];
     
     if (emailIndex < 0 || emailIndex >= cachedEmails.length) {
@@ -187,20 +198,24 @@ Format your response ONLY as valid JSON with these fields, nothing else.
       }, { status: 400 });
     }
     
-    return NextResponse.json({
+    // Prepare response object with emailId to help client-side caching
+    const responseObject = {
       summary: parsedResponse.summary,
       tasks: parsedResponse.tasks,
       hasTaskErrors: parsedResponse.hasTaskErrors,
       taskErrors: parsedResponse.taskErrors || [],
       email: {
+        id: email.id, // Include the email ID for client-side caching
         subject: email.subject,
         from: email.from[0],
         date: email.date
       }
-    });
+    };
+    
+    return NextResponse.json(responseObject);
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.error("Error extracting tasks:", error);
-    return NextResponse.json({ error: `Failed to extract tasks: ${errorMessage}` }, { status: 500 });
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error parsing email';
+    console.error('Error extracting tasks:', errorMessage);
+    return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
 }
