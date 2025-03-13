@@ -50,9 +50,9 @@ export default function EmailSummary() {
   const [error, setError] = useState<string | null>(null);
   const [emailData, setEmailData] = useState<ProcessedEmailResponse | null>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [expandedView, setExpandedView] = useState(false);
   const [cachedEmails, setCachedEmails] = useState<Record<number, ProcessedEmailResponse>>({});
   const [prefetchingNext, setPrefetchingNext] = useState(false);
+  const [isTransitioning, setIsTransitioning] = useState(false); // New state for transitions
 
   // State for managing calendar functionality
   const [selectedCalendarId, setSelectedCalendarId] = useState<string>('');
@@ -63,32 +63,202 @@ export default function EmailSummary() {
   const [calendarSuccess, setCalendarSuccess] = useState<string | null>(null);
   const [timePreference, setTimePreference] = useState<TimePreference>(TIME_PREFERENCES[0]); // Default to "Any time"
   const [calendarsToConsider, setCalendarsToConsider] = useState<string[]>([]);
+  const [expandedView, setExpandedView] = useState(false);
+  const [calendarSectionExpanded, setCalendarSectionExpanded] = useState(false);
 
-  // Memoized fetch function to avoid recreation on each render
-  const fetchProcessedEmail = useCallback(async (index: number, isPrefetch: boolean = false) => {
-    try {
-      if (!isPrefetch) {
-        setLoading(true);
-      } else {
+  // For optimizing navigation, preload both directions
+  const prefetchRange = 10; // Increased prefetch range for better responsiveness
+
+  // Initial load with aggressive prefetching
+  useEffect(() => {
+    const loadInitialEmails = async () => {
+      try {
+        // Load current email
+        const response = await fetch(`/api/nylas/process-email?index=${currentIndex}`);
+        
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'Failed to fetch email data');
+        }
+        
+        const data = await response.json();
+        
+        // Add to cache and update state
+        setCachedEmails(prev => ({ ...prev, [currentIndex]: data }));
+        setEmailData(data);
+        
+        // After the current email loads, prefetch emails in both directions
+        const totalEmails = data.totalEmails;
         setPrefetchingNext(true);
+        
+        // Create an array of indices to prefetch, prioritizing next emails over previous ones
+        const indicesToPrefetch = [];
+        
+        // First add next emails
+        for (let i = 1; i <= prefetchRange; i++) {
+          const nextIndex = currentIndex + i;
+          if (nextIndex < totalEmails) {
+            indicesToPrefetch.push(nextIndex);
+          }
+        }
+        
+        // Then add previous emails
+        for (let i = 1; i <= prefetchRange/2; i++) {
+          const prevIndex = currentIndex - i;
+          if (prevIndex >= 0) {
+            indicesToPrefetch.push(prevIndex);
+          }
+        }
+        
+        // Prefetch all emails in parallel
+        await Promise.all(
+          indicesToPrefetch.map(async (idx) => {
+            // Skip if already cached
+            if (cachedEmails[idx]) return;
+            
+            try {
+              const prefetchResponse = await fetch(`/api/nylas/process-email?index=${idx}`);
+              
+              if (prefetchResponse.ok) {
+                const prefetchData = await prefetchResponse.json();
+                
+                // Add to cache
+                setCachedEmails(prev => ({ ...prev, [idx]: prefetchData }));
+              }
+            } catch (err) {
+              console.error(`Error prefetching email at index ${idx}:`, err);
+            }
+          })
+        );
+        
+        setPrefetchingNext(false);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'An error occurred while fetching email data');
+        console.error(`Error loading initial emails:`, err);
+      } finally {
+        setLoading(false);
       }
+    };
+    
+    setLoading(true);
+    loadInitialEmails();
+  }, []); // Only run once on initial load, not when currentIndex changes
+
+  // Optimized navigation function
+  const navigateToEmail = useCallback(async (index: number) => {
+    // Exit early if we're already at this index
+    if (index === currentIndex) return;
+    
+    // Start transition effect
+    setIsTransitioning(true);
+    
+    // Use cached email if available
+    if (cachedEmails[index]) {
+      // Short timeout to allow transition effect
+      setTimeout(() => {
+        setEmailData(cachedEmails[index]);
+        setCurrentIndex(index);
+        setIsTransitioning(false);
+        
+        // Trigger prefetching of adjacent emails after navigation
+        prefetchAdjacentEmails(index, emailData?.totalEmails || 0);
+      }, 10);
+    } else {
+      try {
+        // If not cached, fetch it
+        const response = await fetch(`/api/nylas/process-email?index=${index}`);
+        
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'Failed to fetch email data');
+        }
+        
+        const data = await response.json();
+        
+        // Add to cache
+        setCachedEmails(prev => ({ ...prev, [index]: data }));
+        
+        // Update state
+        setEmailData(data);
+        setCurrentIndex(index);
+        
+        // Trigger prefetching of adjacent emails after navigation
+        prefetchAdjacentEmails(index, data.totalEmails);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'An error occurred while fetching email data');
+        console.error(`Error navigating to email:`, err);
+      } finally {
+        setIsTransitioning(false);
+      }
+    }
+  }, [cachedEmails, currentIndex, emailData?.totalEmails]);
+
+  // Function to prefetch adjacent emails
+  const prefetchAdjacentEmails = useCallback(async (index: number, totalEmails: number) => {
+    setPrefetchingNext(true);
+    
+    // Create an array of indices to prefetch
+    const indicesToPrefetch = [];
+    
+    // Prioritize the immediate next and previous
+    if (index + 1 < totalEmails) indicesToPrefetch.push(index + 1);
+    if (index - 1 >= 0) indicesToPrefetch.push(index - 1);
+    
+    // Then add the rest in order of priority
+    for (let i = 2; i <= prefetchRange; i++) {
+      if (index + i < totalEmails) indicesToPrefetch.push(index + i);
+      if (index - i >= 0) indicesToPrefetch.push(index - i);
+    }
+    
+    // Prefetch all emails in parallel
+    await Promise.all(
+      indicesToPrefetch.map(async (idx) => {
+        // Skip if already cached
+        if (cachedEmails[idx]) return;
+        
+        try {
+          const prefetchResponse = await fetch(`/api/nylas/process-email?index=${idx}`);
+          
+          if (prefetchResponse.ok) {
+            const prefetchData = await prefetchResponse.json();
+            
+            // Add to cache
+            setCachedEmails(prev => ({ ...prev, [idx]: prefetchData }));
+          }
+        } catch (err) {
+          console.error(`Error prefetching email at index ${idx}:`, err);
+        }
+      })
+    );
+    
+    setPrefetchingNext(false);
+  }, [cachedEmails]);
+
+  const handleNext = useCallback(() => {
+    if (emailData && currentIndex < emailData.totalEmails - 1) {
+      navigateToEmail(currentIndex + 1);
+    }
+  }, [currentIndex, emailData, navigateToEmail]);
+
+  const handlePrevious = useCallback(() => {
+    if (currentIndex > 0) {
+      navigateToEmail(currentIndex - 1);
+    }
+  }, [currentIndex, navigateToEmail]);
+
+  // Simplified fetchProcessedEmail for navigation after initial load
+  const fetchProcessedEmail = useCallback(async (index: number) => {
+    try {
+      setLoading(true);
       
-      setError(null);
-      
-      console.log(`${isPrefetch ? 'Prefetching' : 'Fetching'} processed email for index ${index}...`);
-      
-      // Check if we already have this email in the cache
+      // Check if we have this email in the cache
       if (cachedEmails[index]) {
         console.log(`Using cached email for index ${index}`);
-        if (!isPrefetch) {
-          setEmailData(cachedEmails[index]);
-          setLoading(false);
-        } else {
-          setPrefetchingNext(false);
-        }
+        setEmailData(cachedEmails[index]);
         return;
       }
       
+      // If not in cache, fetch it
       const response = await fetch(`/api/nylas/process-email?index=${index}`);
       
       if (!response.ok) {
@@ -97,74 +267,35 @@ export default function EmailSummary() {
       }
       
       const data = await response.json();
-      console.log(`${isPrefetch ? 'Prefetched' : 'Fetched'} email data received for index ${index}:`, data);
+      console.log(`Fetched email data for index ${index}:`, data);
       
       // Add to cache
       setCachedEmails(prev => ({ ...prev, [index]: data }));
-      
-      if (!isPrefetch) {
-        setEmailData(data);
-      }
+      setEmailData(data);
     } catch (err) {
-      if (!isPrefetch) {
-        setError(err instanceof Error ? err.message : 'An error occurred while fetching email data');
-      }
-      console.error(`Error ${isPrefetch ? 'prefetching' : 'fetching'} processed email:`, err);
+      setError(err instanceof Error ? err.message : 'An error occurred while fetching email data');
+      console.error(`Error fetching processed email:`, err);
     } finally {
-      if (!isPrefetch) {
-        setLoading(false);
-      } else {
-        setPrefetchingNext(false);
-      }
+      setLoading(false);
     }
   }, [cachedEmails]);
 
   // Prefetch the next email when the current one loads
   useEffect(() => {
     if (emailData && currentIndex < emailData.totalEmails - 1) {
-      fetchProcessedEmail(currentIndex + 1, true);
+      const nextIndex = currentIndex + 1;
+      if (!cachedEmails[nextIndex]) {
+        setPrefetchingNext(true);
+        fetchProcessedEmail(nextIndex);
+      }
     }
     
     // If we're not at the beginning, also prefetch the previous email
     if (emailData && currentIndex > 0 && !cachedEmails[currentIndex - 1]) {
-      fetchProcessedEmail(currentIndex - 1, true);
+      setPrefetchingNext(true);
+      fetchProcessedEmail(currentIndex - 1);
     }
   }, [emailData, currentIndex, fetchProcessedEmail, cachedEmails]);
-
-  // Initial load
-  useEffect(() => {
-    const loadInitialEmails = async () => {
-      // Load current email
-      await fetchProcessedEmail(currentIndex);
-      
-      // After the current email loads, prefetch the next five emails (if they exist)
-      if (emailData) {
-        const prefetchLimit = 5; // Number of emails to prefetch
-        for (let i = 1; i <= prefetchLimit; i++) {
-          const nextIndex = currentIndex + i;
-          if (nextIndex < emailData.totalEmails) {
-            setPrefetchingNext(true);
-            await fetchProcessedEmail(nextIndex, true);
-          }
-        }
-        setPrefetchingNext(false);
-      }
-    };
-    
-    loadInitialEmails();
-  }, [currentIndex, fetchProcessedEmail, emailData]);
-
-  const handlePrevious = () => {
-    if (currentIndex > 0) {
-      setCurrentIndex(currentIndex - 1);
-    }
-  };
-
-  const handleNext = () => {
-    if (emailData && currentIndex < emailData.totalEmails - 1) {
-      setCurrentIndex(currentIndex + 1);
-    }
-  };
 
   const formatDate = (timestamp: number) => {
     return new Date(timestamp * 1000).toLocaleString();
@@ -411,198 +542,226 @@ export default function EmailSummary() {
   return (
     <div className="flex flex-col min-h-screen bg-gray-50">
       <div className="w-full px-4 py-8">
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold text-indigo-700 bg-gradient-to-r from-indigo-700 to-purple-700 bg-clip-text text-transparent">Email Insights</h1>
+        <div className="mb-6 flex justify-between items-center">
+          <h1 className="text-2xl font-bold text-gray-800">Email Summary</h1>
+          
+          {/* Moved Calendar Selection to top level */}
+          {emailData && emailData.tasks && emailData.tasks.length > 0 && (
+            <button
+              onClick={() => setCalendarSectionExpanded(!calendarSectionExpanded)}
+              className="px-4 py-2 text-sm bg-indigo-100 text-indigo-700 hover:bg-indigo-200 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 flex items-center"
+            >
+              {calendarSectionExpanded ? 'Hide Calendar Options' : 'Show Calendar Options'}
+              <svg 
+                className={`ml-1 h-4 w-4 transform transition-transform duration-200 ${calendarSectionExpanded ? 'rotate-180' : ''}`}
+                fill="none" 
+                viewBox="0 0 24 24" 
+                stroke="currentColor"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+          )}
         </div>
         
-        {emailData && (
-          <div className="bg-white shadow-md rounded-lg overflow-hidden">
-            {/* Email Header */}
-            <div className="border-b border-gray-200 p-6 bg-gradient-to-r from-indigo-50 to-purple-50">
-              <h2 className="text-xl font-bold mb-2 text-indigo-900">{emailData.email.subject}</h2>
-              <p className="text-gray-800 mb-1">
-                <strong>From:</strong> {emailData.email.from[0].name} &lt;{emailData.email.from[0].email}&gt;
-              </p>
-              <p className="text-gray-800">
-                <strong>Date:</strong> {formatDate(emailData.email.date)}
-              </p>
+        {/* Minimized Calendar Selection */}
+        {emailData && emailData.tasks && emailData.tasks.length > 0 && calendarSectionExpanded && (
+          <div className="bg-white p-4 mb-4 rounded-lg shadow-sm">
+            <div className="p-4 border border-indigo-200 rounded-md bg-gradient-to-r from-indigo-50 to-purple-50">
+              <h3 className="text-lg font-semibold mb-3 text-indigo-800">Calendar Selection</h3>
               
-              {/* Email progress indicator */}
-              <div className="mt-4">
-                <div className="flex justify-between text-sm text-gray-700 mb-1">
-                  <span>Email {emailData.currentIndex + 1} of {emailData.totalEmails}</span>
-                  <span>{Math.round(((emailData.currentIndex + 1) / emailData.totalEmails) * 100)}%</span>
+              {calendarLoading ? (
+                <div className="text-indigo-600">Loading calendars...</div>
+              ) : calendars.length === 0 ? (
+                <div className="text-red-600">
+                  No calendars available. Make sure your Nylas account is connected.
                 </div>
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div 
-                    className="bg-blue-600 h-2 rounded-full" 
-                    style={{ width: `${((emailData.currentIndex + 1) / emailData.totalEmails) * 100}%` }}
-                  ></div>
-                </div>
-              </div>
-              
-              {/* Navigation buttons */}
-              <div className="flex justify-end mt-4 space-x-2">
-                <button
-                  onClick={handlePrevious}
-                  disabled={currentIndex === 0}
-                  className={`px-4 py-2 rounded-md text-sm ${
-                    currentIndex === 0
-                      ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
-                      : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
-                  }`}
-                >
-                  Previous
-                </button>
-                <button
-                  onClick={handleNext}
-                  disabled={currentIndex >= emailData.totalEmails - 1}
-                  className={`px-4 py-2 rounded-md text-sm flex items-center ${
-                    currentIndex >= emailData.totalEmails - 1
-                      ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
-                      : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
-                  }`}
-                >
-                  Next
-                  {prefetchingNext && currentIndex < emailData.totalEmails - 1 && (
-                    <span className="ml-2 inline-block h-3 w-3 rounded-full border-2 border-b-transparent border-blue-700 animate-spin"></span>
-                  )}
-                </button>
-              </div>
-
-            </div>
-            
-            {/* Calendar Selection */}
-            {emailData.tasks && emailData.tasks.length > 0 && (
-              <div className="px-6 pt-4">
-                <div className="p-4 border border-indigo-200 rounded-md bg-gradient-to-r from-indigo-50 to-purple-50 mb-4">
-                  <h3 className="text-lg font-semibold mb-3 text-indigo-800">Calendar Selection</h3>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label htmlFor="calendar-select" className="block text-sm font-medium text-indigo-700 mb-1">
+                      Task Calendar
+                    </label>
+                    <select
+                      id="calendar-select"
+                      className="block w-full p-2 border border-indigo-300 rounded-md shadow-sm 
+                               focus:ring-indigo-500 focus:border-indigo-500 bg-white
+                               text-indigo-800"
+                      value={selectedCalendarId}
+                      onChange={(e) => setSelectedCalendarId(e.target.value)}
+                    >
+                      {calendars.map((calendar) => (
+                        <option key={calendar.id} value={calendar.id} disabled={calendar.read_only} 
+                               className={calendar.read_only ? "text-gray-400" : "text-indigo-800"}>
+                          {calendar.name} {calendar.read_only ? '(Read Only)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                   
-                  {calendarLoading ? (
-                    <div className="text-indigo-600">Loading calendars...</div>
-                  ) : calendars.length === 0 ? (
-                    <div className="text-red-600">
-                      No calendars available. Make sure your Nylas account is connected.
-                    </div>
-                  ) : (
-                    <>
-                      <div className="mb-3">
-                        <label htmlFor="calendar-select" className="block text-sm font-medium text-indigo-700 mb-1">
-                          Select Calendar for All Tasks
-                        </label>
-                        <select
-                          id="calendar-select"
-                          className="block w-full p-2 border border-indigo-300 rounded-md shadow-sm 
-                                    focus:ring-indigo-500 focus:border-indigo-500 bg-white
-                                    text-indigo-800"
-                          value={selectedCalendarId}
-                          onChange={(e) => setSelectedCalendarId(e.target.value)}
-                        >
-                          {calendars.map((calendar) => (
-                            <option key={calendar.id} value={calendar.id} disabled={calendar.read_only} 
-                                   className={calendar.read_only ? "text-gray-400" : "text-indigo-800"}>
-                              {calendar.name} {calendar.read_only ? '(Read Only)' : ''}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      
-                      <div className="mb-3">
-                        <label htmlFor="calendars-to-consider" className="block text-sm font-medium text-indigo-700 mb-1">
-                          Calendars to Check for Availability
-                        </label>
-                        <div className="flex flex-col space-y-2 max-h-40 overflow-y-auto p-2 border border-indigo-300 rounded-md bg-white">
-                          {calendars.map((calendar) => (
-                            <div key={`consider-${calendar.id}`} className="flex items-center">
-                              <input
-                                type="checkbox"
-                                id={`consider-${calendar.id}`}
-                                checked={calendarsToConsider.includes(calendar.id)}
-                                onChange={(e) => {
-                                  if (e.target.checked) {
-                                    setCalendarsToConsider(prev => [...prev, calendar.id]);
-                                  } else {
-                                    setCalendarsToConsider(prev => prev.filter(id => id !== calendar.id));
-                                  }
-                                }}
-                                className="h-4 w-4 text-indigo-600 border-indigo-300 rounded"
-                              />
-                              <label htmlFor={`consider-${calendar.id}`} className="ml-2 text-sm text-indigo-800">
-                                {calendar.name}
-                              </label>
-                            </div>
-                          ))}
+                  <div>
+                    <TimePreferenceSelector
+                      selectedPreference={timePreference}
+                      onChange={setTimePreference}
+                    />
+                    <p className="text-xs text-indigo-600 mt-1">
+                      Scheduling preference for tasks
+                    </p>
+                  </div>
+                  
+                  <div className="md:col-span-2">
+                    <label htmlFor="calendars-to-consider" className="block text-sm font-medium text-indigo-700 mb-1">
+                      Calendars to Check for Availability
+                    </label>
+                    <div className="flex flex-wrap gap-2 p-2 border border-indigo-300 rounded-md bg-white">
+                      {calendars.map((calendar) => (
+                        <div key={`consider-${calendar.id}`} className="flex items-center">
+                          <input
+                            type="checkbox"
+                            id={`consider-${calendar.id}`}
+                            checked={calendarsToConsider.includes(calendar.id)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setCalendarsToConsider(prev => [...prev, calendar.id]);
+                              } else {
+                                setCalendarsToConsider(prev => prev.filter(id => id !== calendar.id));
+                              }
+                            }}
+                            className="h-4 w-4 text-indigo-600 border-indigo-300 rounded"
+                          />
+                          <label htmlFor={`consider-${calendar.id}`} className="ml-2 text-sm text-indigo-800">
+                            {calendar.name}
+                          </label>
                         </div>
-                        <p className="text-xs text-indigo-600 mt-1">
-                          Select calendars to check for conflicts. If none selected, all calendars will be checked.
-                        </p>
-                      </div>
-                      
-                      <div className="mb-3">
-                        <TimePreferenceSelector
-                          selectedPreference={timePreference}
-                          onChange={setTimePreference}
-                        />
-                        <p className="text-xs text-indigo-600 mt-1">
-                          This affects when tasks will be scheduled on your calendar
-                        </p>
-                      </div>
-                      
+                      ))}
+                    </div>
+                  </div>
+                  
+                  {(calendarError || calendarSuccess) && (
+                    <div className="md:col-span-2">
                       {calendarError && (
-                        <div className="mb-3 p-2 bg-red-50 text-red-700 rounded-md border border-red-200">
+                        <div className="p-2 bg-red-50 text-red-700 rounded-md border border-red-200">
                           {calendarError}
                         </div>
                       )}
                       
                       {calendarSuccess && (
-                        <div className="mb-3 p-2 bg-green-50 text-green-700 rounded-md border border-green-200">
+                        <div className="p-2 bg-green-50 text-green-700 rounded-md border border-green-200">
                           {calendarSuccess}
                         </div>
                       )}
-                    </>
+                    </div>
                   )}
                 </div>
-              </div>
-            )}
-            
-            {/* Email content sections */}
-            <div className="p-6">
-              {/* AI Summary */}
-              <div className="mb-6">
-                <h3 className="text-lg font-semibold mb-2 text-indigo-800 border-b border-indigo-200 pb-1">Summary</h3>
-                <div className="p-4 bg-indigo-50 border border-indigo-100 rounded-md">
-                  <p className="text-indigo-800">{emailData.summary}</p>
-                </div>
-              </div>
-              
-              {/* Tasks Section */}
-              <div className="mb-6">
-                <h3 className="text-lg font-semibold mb-2 text-indigo-800 border-b border-indigo-200 pb-1">Tasks</h3>
-                {renderTasks()}
-              </div>
-              
-              {/* Show/Hide Original Email Toggle */}
-              <div className="border-t pt-4">
-                <button 
-                  onClick={() => setExpandedView(!expandedView)}
-                  className="text-indigo-600 hover:text-indigo-800 text-sm underline focus:outline-none font-medium"
-                >
-                  {expandedView ? 'Hide original email' : 'Show original email'}
-                </button>
-                
-                {expandedView && (
-                  <div className="mt-4 p-4 border border-indigo-200 rounded-md bg-white overflow-auto max-h-96">
-                    {emailData.email.body ? (
-                      <div className="text-indigo-900" dangerouslySetInnerHTML={formatEmailBody(emailData.email.body)} />
-                    ) : (
-                      <p className="text-red-600 italic">No email content available</p>
-                    )}
-                  </div>
-                )}
-              </div>
+              )}
             </div>
           </div>
         )}
+        
+        {/* Navigation Controls */}
+        <div className="bg-white p-4 mb-4 rounded-lg shadow-sm flex justify-between items-center">
+          <button
+            onClick={handlePrevious}
+            disabled={loading || currentIndex === 0 || isTransitioning}
+            className={`px-4 py-2 rounded-md ${
+              currentIndex === 0 || loading || isTransitioning
+                ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                : 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'
+            } transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500`}
+          >
+            &larr; Previous Email
+          </button>
+          
+          <div className="text-sm text-gray-500">
+            {loading ? 'Loading...' : emailData ? `Email ${currentIndex + 1} of ${emailData.totalEmails}` : ''}
+            {prefetchingNext && <span className="ml-2 text-xs text-indigo-500">(Preloading more emails...)</span>}
+          </div>
+          
+          <button
+            onClick={handleNext}
+            disabled={loading || !emailData || currentIndex >= emailData.totalEmails - 1 || isTransitioning}
+            className={`px-4 py-2 rounded-md ${
+              !emailData || currentIndex >= emailData.totalEmails - 1 || loading || isTransitioning
+                ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                : 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'
+            } transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500`}
+          >
+            Next Email &rarr;
+          </button>
+        </div>
+        
+        {/* Email Content */}
+        <div 
+          className={`bg-white p-6 rounded-lg shadow-md transition-opacity duration-150 ${
+            isTransitioning ? 'opacity-50' : 'opacity-100'
+          }`}
+        >
+          {emailData && (
+            <div className="bg-white shadow-md rounded-lg overflow-hidden">
+              {/* Email Header */}
+              <div className="border-b border-gray-200 p-6 bg-gradient-to-r from-indigo-50 to-purple-50">
+                <h2 className="text-xl font-bold mb-2 text-indigo-900">{emailData.email.subject}</h2>
+                <p className="text-gray-800 mb-1">
+                  <strong>From:</strong> {emailData.email.from[0].name} &lt;{emailData.email.from[0].email}&gt;
+                </p>
+                <p className="text-gray-800">
+                  <strong>Date:</strong> {formatDate(emailData.email.date)}
+                </p>
+                
+                {/* Email progress indicator */}
+                <div className="mt-4">
+                  <div className="flex justify-between text-sm text-gray-700 mb-1">
+                    <span>Email {emailData.currentIndex + 1} of {emailData.totalEmails}</span>
+                    <span>{Math.round(((emailData.currentIndex + 1) / emailData.totalEmails) * 100)}%</span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-2">
+                    <div 
+                      className="bg-blue-600 h-2 rounded-full" 
+                      style={{ width: `${((emailData.currentIndex + 1) / emailData.totalEmails) * 100}%` }}
+                    ></div>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Email content sections */}
+              <div className="p-6">
+                {/* AI Summary */}
+                <div className="mb-6">
+                  <h3 className="text-lg font-semibold mb-2 text-indigo-800 border-b border-indigo-200 pb-1">Summary</h3>
+                  <div className="p-4 bg-indigo-50 border border-indigo-100 rounded-md">
+                    <p className="text-indigo-800">{emailData.summary}</p>
+                  </div>
+                </div>
+                
+                {/* Tasks Section */}
+                <div className="mb-6">
+                  <h3 className="text-lg font-semibold mb-2 text-indigo-800 border-b border-indigo-200 pb-1">Tasks</h3>
+                  {renderTasks()}
+                </div>
+                
+                {/* Show/Hide Original Email Toggle */}
+                <div className="border-t pt-4">
+                  <button 
+                    onClick={() => setExpandedView(!expandedView)}
+                    className="text-indigo-600 hover:text-indigo-800 text-sm underline focus:outline-none font-medium"
+                  >
+                    {expandedView ? 'Hide original email' : 'Show original email'}
+                  </button>
+                  
+                  {expandedView && (
+                    <div className="mt-4 p-4 border border-indigo-200 rounded-md bg-white overflow-auto max-h-96">
+                      {emailData.email.body ? (
+                        <div className="text-indigo-900" dangerouslySetInnerHTML={formatEmailBody(emailData.email.body)} />
+                      ) : (
+                        <p className="text-red-600 italic">No email content available</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

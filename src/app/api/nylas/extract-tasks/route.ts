@@ -173,7 +173,7 @@ Each task object should have the following properties:
 - description: A clear, concise description of what needs to be done
 - deadline: When the task needs to be completed by (or null if not specified)
 - task_type: The type of task, must be one of ["meeting_scheduling", "reminder", "to_do_item"]
-- priority: A priority level from 1-5, where 5 is highest priority. Make sure that the priority is always super low unless it's a super pressing and time sensitive event. 
+- priority: A priority level from 1-5, where 5 is highest priority. Make sure that the priority is always super low unless it's a super pressing and time sensitive event. Most tasks should be 1 or 2.
 - context: Any additional relevant context for the task (meeting links, etc.)
 
 Format your response ONLY as valid JSON with these fields, nothing else.
