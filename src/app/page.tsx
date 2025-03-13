@@ -26,7 +26,7 @@ export default async function Home() {
                   </svg>
                 </div>
                 <p className="text-green-800">
-                  Connected as <span className="font-semibold">{userEmail ? userEmail : 'Nylas User'}</span>
+                  Connected as <span className="font-semibold">{userEmail ? decodeURIComponent(userEmail) : 'Nylas User'}</span>
                 </p>
                 <Link
                   href="/email-summary"
