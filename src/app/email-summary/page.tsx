@@ -137,9 +137,17 @@ export default function EmailSummary() {
       // Load current email
       await fetchProcessedEmail(currentIndex);
       
-      // After the current email loads, prefetch the next one (if there is one)
-      if (emailData && currentIndex < emailData.totalEmails - 1) {
-        fetchProcessedEmail(currentIndex + 1, true);
+      // After the current email loads, prefetch the next five emails (if they exist)
+      if (emailData) {
+        const prefetchLimit = 5; // Number of emails to prefetch
+        for (let i = 1; i <= prefetchLimit; i++) {
+          const nextIndex = currentIndex + i;
+          if (nextIndex < emailData.totalEmails) {
+            setPrefetchingNext(true);
+            await fetchProcessedEmail(nextIndex, true);
+          }
+        }
+        setPrefetchingNext(false);
       }
     };
     
@@ -288,6 +296,7 @@ export default function EmailSummary() {
         
         if (data.calendars && Array.isArray(data.calendars)) {
           setCalendars(data.calendars);
+          
           // Auto-select the first calendar if available
           if (data.calendars.length > 0 && data.calendars.some((cal: { read_only?: boolean }) => !cal.read_only)) {
             // Find first non-read-only calendar
@@ -298,6 +307,10 @@ export default function EmailSummary() {
               setSelectedCalendarId(data.calendars[0].id);
             }
           }
+          
+          // Pre-select all calendars for availability checking
+          const allCalendarIds = data.calendars.map((cal: Calendar) => cal.id);
+          setCalendarsToConsider(allCalendarIds);
         } else {
           setCalendars([]);
         }
@@ -309,10 +322,9 @@ export default function EmailSummary() {
       }
     };
     
-    if (emailData?.tasks && emailData.tasks.length > 0) {
-      fetchCalendars();
-    }
-  }, [emailData]);
+    // Load calendars immediately when component mounts, regardless of tasks
+    fetchCalendars();
+  }, []); // Empty dependency array to only run once on mount
 
   // Display task section
   const renderTasks = () => {
