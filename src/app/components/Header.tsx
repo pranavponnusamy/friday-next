@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 
 export default function Header() {
@@ -34,23 +35,23 @@ export default function Header() {
     getUserEmail();
 
     // Listen for a custom event that might be triggered when email is updated
-    const handleEmailUpdate = (event: CustomEvent) => {
+    const handleEmailUpdate = (event: CustomEvent<{ email: string }>) => {
       if (event.detail && event.detail.email) {
         setUserEmail(event.detail.email);
         localStorage.setItem('userEmail', event.detail.email);
       }
     };
 
-    window.addEventListener('userEmailUpdated' as any, handleEmailUpdate);
+    window.addEventListener('userEmailUpdated' as keyof WindowEventMap, handleEmailUpdate as EventListener);
 
     return () => {
-      window.removeEventListener('userEmailUpdated' as any, handleEmailUpdate);
+      window.removeEventListener('userEmailUpdated' as keyof WindowEventMap, handleEmailUpdate as EventListener);
     };
   }, []);
 
   return (
     <header className="bg-white shadow-sm">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="w-full px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between h-16 items-center">
           <div className="flex">
             <div className="flex-shrink-0 flex items-center">
@@ -70,14 +71,14 @@ export default function Header() {
                 Home
               </Link>
               <Link
-                href="/calendar"
+                href="/email-summary"
                 className={`px-3 py-2 rounded-md text-sm font-medium ${
-                  pathname === '/calendar' 
+                  pathname === '/email-summary' 
                     ? 'bg-indigo-100 text-indigo-700' 
                     : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700'
                 }`}
               >
-                Calendar
+                Email Summary
               </Link>
             </nav>
           </div>
@@ -88,10 +89,12 @@ export default function Header() {
                   <span>Signed in as </span>
                   <span className="font-semibold text-gray-700">{decodeURIComponent(userEmail)}</span>
                 </div>
-                <img
+                <Image
                   className="h-8 w-8 rounded-full bg-gray-200"
                   src={`https://www.gravatar.com/avatar/${Buffer.from(decodeURIComponent(userEmail)).toString('hex')}?d=identicon`}
                   alt="User avatar"
+                  width={32}
+                  height={32}
                 />
               </div>
             ) : (

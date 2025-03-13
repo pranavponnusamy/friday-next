@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import Link from 'next/link';
 import TimePreferenceSelector, { TimePreference, TIME_PREFERENCES } from '../components/TimePreferenceSelector';
 
 interface EmailData {
@@ -391,12 +390,6 @@ export default function EmailSummary() {
         <div className="container mx-auto max-w-4xl">
           <div className="bg-red-50 p-6 rounded-md border border-red-200 mb-6">
             <p className="text-red-800 mb-4">{error}</p>
-            <Link 
-              href="/"
-              className="inline-block bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-md transition-colors"
-            >
-              Return to Home
-            </Link>
           </div>
         </div>
       </div>
@@ -405,15 +398,9 @@ export default function EmailSummary() {
 
   return (
     <div className="flex flex-col min-h-screen bg-gray-50">
-      <div className="container mx-auto px-4 py-8 max-w-4xl">
-        <div className="flex justify-between items-center mb-6">
+      <div className="w-full px-4 py-8">
+        <div className="mb-6">
           <h1 className="text-2xl font-bold text-indigo-700 bg-gradient-to-r from-indigo-700 to-purple-700 bg-clip-text text-transparent">Email Insights</h1>
-          <Link 
-            href="/"
-            className="text-indigo-600 hover:text-indigo-800 underline"
-          >
-            Return to Home
-          </Link>
         </div>
         
         {emailData && (

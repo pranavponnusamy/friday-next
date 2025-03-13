@@ -23,6 +23,20 @@ const nylas = new Nylas({
   apiUri: process.env.NYLAS_API_URI || 'https://api.us.nylas.com',
 });
 
+// Server-side cache for emails and processed results
+// We'll use Maps to store the data with the Nylas grant ID as the key
+interface EmailCache {
+  emails: NylasEmail[];
+  lastFetched: number; // Timestamp when emails were last fetched
+  processedEmails: Map<number, ProcessedEmailResponse>; // Map of processed emails by index
+}
+
+// Main cache object - keys are grantIds
+const emailCache = new Map<string, EmailCache>();
+
+// Cache expiration time in milliseconds (15 minutes)
+const CACHE_EXPIRATION = 15 * 60 * 1000;
+
 // Task type enum
 const TASK_TYPES = {
   MEETING_SCHEDULING: 'meeting_scheduling',
@@ -56,6 +70,20 @@ interface Task {
 interface TaskValidationResult {
   valid: boolean;
   error?: string;
+}
+
+// For processed email responses
+interface ProcessedEmailResponse {
+  email: NylasEmail;
+  summary: string;
+  tasks: Task[];
+  currentIndex: number;
+  totalEmails: number;
+  isMock?: boolean;
+  error?: string;
+  hasTaskErrors?: boolean;
+  taskErrors?: string[];
+  rawResponse?: string;
 }
 
 // Simplified task validation
@@ -167,11 +195,119 @@ const mockEmails: NylasEmail[] = [
   }
 ];
 
+// Helper function to fetch emails from Nylas
+async function fetchEmailsFromNylas(grantId: string): Promise<NylasEmail[]> {
+  try {
+    // Fetch messages from the Nylas API using the messages.list method
+    const messagesResponse = await nylas.messages.list({
+      identifier: grantId,
+      queryParams: {
+        limit: 10,
+      },
+    });
+    
+    // Process the response, which might have different formats
+    let emails: NylasEmail[] = [];
+    
+    try {
+      // First try: check if response has a data property with an array
+      if (messagesResponse && typeof messagesResponse === 'object' && 'data' in messagesResponse) {
+        const data = messagesResponse.data;
+        if (Array.isArray(data)) {
+          emails = data as unknown as NylasEmail[];
+          console.log(`Successfully fetched ${emails.length} emails from data property`);
+        }
+      } else {
+        // Second try: check if we can iterate over the response
+        try {
+          // Check if the response is iterable
+          if (messagesResponse && Symbol.iterator in Object(messagesResponse)) {
+            emails = Array.from(messagesResponse as Iterable<unknown>) as unknown as NylasEmail[];
+            console.log(`Successfully fetched ${emails.length} emails using iteration`);
+          }
+        } catch (iterError) {
+          console.warn("Iterator approach failed:", iterError);
+          
+          // Last attempt - check if it's directly an array
+          if (Array.isArray(messagesResponse)) {
+            emails = messagesResponse as unknown as NylasEmail[];
+            console.log(`Successfully fetched ${emails.length} emails from array response`);
+          }
+        }
+      }
+    } catch (parseError) {
+      console.error("Error parsing Nylas response:", parseError);
+    }
+    
+    return emails;
+  } catch (error) {
+    console.error("Error fetching emails from Nylas:", error);
+    return [];
+  }
+}
+
+// Helper function to process a single email with AI
+async function processEmailWithAI(email: NylasEmail): Promise<ParsedResponse> {
+  try {
+    // Construct message for Gemini
+    const prompt = `
+I need you to analyze the following email and provide two things:
+1. A short, concise summary of the email (3-5 sentences max)
+2. Extract any tasks or action items that require follow-up
+
+Email Subject: ${email.subject}
+Email From: ${email.from && email.from[0] ? `${email.from[0].name} <${email.from[0].email}>` : 'Unknown Sender'}
+Email Date: ${new Date(email.date * 1000).toLocaleString()}
+
+Email Body:
+${email.body}
+
+Return your response as a JSON object with two fields: "summary" and "tasks". The "summary" field should contain the summary text, and the "tasks" field should contain a JSON array of task objects.
+
+Each task object should have the following properties:
+- description: A clear, concise description of what needs to be done
+- deadline: When the task needs to be completed by (or null if not specified)
+- task_type: The type of task, must be one of ["meeting_scheduling", "reminder", "to_do_item"]
+- priority: A priority level from 1-5, where 5 is highest priority
+- context: Any additional relevant context for the task
+- duration: Estimated time needed to complete the task in minutes (e.g., 30, 60, 120)
+
+For the duration field, analyze the complexity of the task and provide a reasonable estimate. For example:
+- Quick tasks like sending a brief email might be 15-30 minutes
+- Meeting preparation might be 60 minutes
+- More complex tasks might be 120+ minutes
+
+Format your response ONLY as valid JSON with these fields, nothing else.
+`;
+    
+    // Start chat session with Gemini
+    const chatSession = model.startChat({
+      generationConfig,
+      history: [],
+    });
+    
+    const result = await chatSession.sendMessage(prompt);
+    const responseText = result.response.text();
+    
+    // Parse the response
+    return parseCombinedResponse(responseText);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error("AI processing error:", error);
+    
+    return {
+      valid: false,
+      error: `AI processing failed: ${errorMessage}`
+    };
+  }
+}
+
 export async function GET(request: NextRequest) {
   try {
     // Get the index from the query parameters
     const { searchParams } = new URL(request.url);
     const index = parseInt(searchParams.get('index') || '0', 10);
+    const forceRefresh = searchParams.get('refresh') === 'true';
     
     // Get cookies to check for Nylas grant ID
     const cookieStore = await cookies();
@@ -208,138 +344,31 @@ export async function GET(request: NextRequest) {
     
     console.log("Using grant ID:", grantId);
     
-    // Try to fetch emails from Nylas
-    try {
-      // Fetch messages from the Nylas API using the messages.list method
-      const messagesResponse = await nylas.messages.list({
-        identifier: grantId,
-        queryParams: {
-          limit: 10,
-        },
-      });
+    // Check if we have cached data for this grant ID
+    const now = Date.now();
+    let userEmailCache = emailCache.get(grantId);
+    
+    // If no cache exists, or cache is expired, or force refresh is requested, fetch fresh data
+    if (!userEmailCache || (now - userEmailCache.lastFetched > CACHE_EXPIRATION) || forceRefresh) {
+      console.log("Cache miss or expired, fetching fresh emails from Nylas");
       
-      // Process the response, which might have different formats
-      let emails: NylasEmail[] = [];
+      // Fetch emails from Nylas
+      const emails = await fetchEmailsFromNylas(grantId);
       
-      try {
-        // First try: check if response has a data property with an array
-        if (messagesResponse && typeof messagesResponse === 'object' && 'data' in messagesResponse) {
-          const data = messagesResponse.data;
-          if (Array.isArray(data)) {
-            emails = data as unknown as NylasEmail[];
-            console.log(`Successfully fetched ${emails.length} emails from data property`);
-          }
-        } else {
-          // Second try: check if we can iterate over the response
-          try {
-            // Check if the response is iterable
-            if (messagesResponse && Symbol.iterator in Object(messagesResponse)) {
-              emails = Array.from(messagesResponse as Iterable<unknown>) as unknown as NylasEmail[];
-              console.log(`Successfully fetched ${emails.length} emails using iteration`);
-            }
-          } catch (iterError) {
-            console.warn("Iterator approach failed:", iterError);
-            
-            // Last attempt - check if it's directly an array
-            if (Array.isArray(messagesResponse)) {
-              emails = messagesResponse as unknown as NylasEmail[];
-              console.log(`Successfully fetched ${emails.length} emails from array response`);
-            }
-          }
-        }
-      } catch (parseError) {
-        console.error("Error parsing Nylas response:", parseError);
-      }
-      
-      // If we successfully got emails, process the requested one
       if (emails.length > 0) {
-        // Make sure index is within bounds
-        const safeIndex = Math.min(index, emails.length - 1);
-        const email = emails[safeIndex];
+        // Create or update the cache
+        userEmailCache = {
+          emails: emails,
+          lastFetched: now,
+          processedEmails: new Map()
+        };
         
-        // Debug info
-        console.log(`Processing email #${safeIndex + 1}: ${email.subject}`);
-        
-        // Construct message for Gemini
-        const prompt = `
-I need you to analyze the following email and provide two things:
-1. A short, concise summary of the email (3-5 sentences max)
-2. Extract any tasks or action items that require follow-up
-
-Email Subject: ${email.subject}
-Email From: ${email.from && email.from[0] ? `${email.from[0].name} <${email.from[0].email}>` : 'Unknown Sender'}
-Email Date: ${new Date(email.date * 1000).toLocaleString()}
-
-Email Body:
-${email.body}
-
-Return your response as a JSON object with two fields: "summary" and "tasks". The "summary" field should contain the summary text, and the "tasks" field should contain a JSON array of task objects.
-
-Each task object should have the following properties:
-- description: A clear, concise description of what needs to be done
-- deadline: When the task needs to be completed by (or null if not specified)
-- task_type: The type of task, must be one of ["meeting_scheduling", "reminder", "to_do_item"]
-- priority: A priority level from 1-5, where 5 is highest priority
-- context: Any additional relevant context for the task
-- duration: Estimated time needed to complete the task in minutes (e.g., 30, 60, 120)
-
-For the duration field, analyze the complexity of the task and provide a reasonable estimate. For example:
-- Quick tasks like sending a brief email might be 15-30 minutes
-- Meeting preparation might be 60 minutes
-- More complex tasks might be 120+ minutes
-
-Format your response ONLY as valid JSON with these fields, nothing else.
-`;
-        
-        try {
-          // Start chat session with Gemini
-          const chatSession = model.startChat({
-            generationConfig,
-            history: [],
-          });
-          
-          const result = await chatSession.sendMessage(prompt);
-          const responseText = result.response.text();
-          
-          // Parse the response
-          const parsedResponse = parseCombinedResponse(responseText);
-          
-          if (!parsedResponse.valid) {
-            console.error("Invalid AI response:", parsedResponse.error);
-            // Return the email with an error for the summary/tasks
-            return NextResponse.json({ 
-              email: email,
-              error: parsedResponse.error,
-              currentIndex: safeIndex,
-              totalEmails: emails.length,
-              rawResponse: parsedResponse.rawResponse
-            }, { status: 200 }); // Still return 200 to show the email
-          }
-          
-          // Return the combined data
-          return NextResponse.json({
-            email: email,
-            summary: parsedResponse.summary,
-            tasks: parsedResponse.tasks,
-            hasTaskErrors: parsedResponse.hasTaskErrors,
-            taskErrors: parsedResponse.taskErrors || [],
-            currentIndex: safeIndex,
-            totalEmails: emails.length
-          });
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-          console.error("AI processing error:", error);
-          // Return the email but with an error for the AI part
-          return NextResponse.json({ 
-            email: email,
-            error: `AI processing failed: ${errorMessage}`,
-            currentIndex: safeIndex,
-            totalEmails: emails.length
-          }, { status: 200 }); // Still return 200 to show the email
-        }
+        // Store in cache
+        emailCache.set(grantId, userEmailCache);
       } else {
         console.warn("No emails found in Nylas response, using mock data");
-        // Fallback to mock data if no emails found
+        
+        // Return mock data if no emails found
         return NextResponse.json({ 
           email: mockEmails[index % mockEmails.length],
           summary: "This is a mock email summary since no real emails were found.",
@@ -356,29 +385,84 @@ Format your response ONLY as valid JSON with these fields, nothing else.
           isMock: true
         });
       }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      console.error("Error fetching emails from Nylas:", error);
-      // Fallback to mock data on error
-      return NextResponse.json({ 
-        email: mockEmails[index % mockEmails.length],
-        summary: "This is a mock email summary due to an error fetching your emails.",
-        tasks: [{
-          description: "Check your Nylas API connection",
-          deadline: "As soon as possible",
-          task_type: "to_do_item",
-          priority: 5,
-          context: `Error: ${errorMessage}`,
-          duration: 15 // 15 minutes
-        }],
-        currentIndex: index,
-        totalEmails: mockEmails.length,
-        isMock: true
-      });
+    } else {
+      console.log("Using cached emails, last fetched:", new Date(userEmailCache.lastFetched).toLocaleString());
     }
+    
+    // Now we should have a valid cache
+    const emails = userEmailCache!.emails;
+    
+    // Make sure index is within bounds
+    const safeIndex = Math.min(index, emails.length - 1);
+    const email = emails[safeIndex];
+    
+    // Check if we have already processed this email
+    if (userEmailCache!.processedEmails.has(safeIndex) && !forceRefresh) {
+      console.log(`Using cached processed email for index ${safeIndex}`);
+      
+      // Return the cached processed email
+      return NextResponse.json(userEmailCache!.processedEmails.get(safeIndex));
+    }
+    
+    // Process the email if it's not in the cache
+    console.log(`Processing email #${safeIndex + 1}: ${email.subject}`);
+    
+    // Process the email with AI
+    const parsedResponse = await processEmailWithAI(email);
+    
+    let response: ProcessedEmailResponse;
+    
+    if (!parsedResponse.valid) {
+      console.error("Invalid AI response:", parsedResponse.error);
+      
+      // Return the email with an error for the summary/tasks
+      response = { 
+        email: email,
+        summary: "Error generating summary",
+        tasks: [],
+        error: parsedResponse.error,
+        currentIndex: safeIndex,
+        totalEmails: emails.length,
+        rawResponse: parsedResponse.rawResponse
+      };
+    } else {
+      // Successful AI processing
+      response = {
+        email: email,
+        summary: parsedResponse.summary || "",
+        tasks: parsedResponse.tasks || [],
+        hasTaskErrors: parsedResponse.hasTaskErrors,
+        taskErrors: parsedResponse.taskErrors || [],
+        currentIndex: safeIndex,
+        totalEmails: emails.length
+      };
+    }
+    
+    // Cache the processed result
+    userEmailCache!.processedEmails.set(safeIndex, response);
+    
+    // Return the response
+    return NextResponse.json(response);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.error("Unhandled error in process-email route:", error);
-    return NextResponse.json({ error: `Failed to process email: ${errorMessage}` }, { status: 500 });
+    console.error("Error in GET handler:", error);
+    
+    // Fallback to mock data on error
+    return NextResponse.json({ 
+      email: mockEmails[0],
+      summary: "An error occurred while processing your emails.",
+      tasks: [{
+        description: "Check your Nylas API connection",
+        deadline: "As soon as possible",
+        task_type: "to_do_item",
+        priority: 5,
+        context: `Error: ${errorMessage}`,
+        duration: 15 // 15 minutes
+      }],
+      currentIndex: 0,
+      totalEmails: 1,
+      isMock: true,
+      error: errorMessage
+    }, { status: 500 });
   }
 }

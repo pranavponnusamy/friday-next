@@ -9,7 +9,7 @@ export default async function Home() {
 
   return (
     <div className="flex flex-col min-h-screen bg-gray-50">
-      <div className="container mx-auto px-4 py-8 max-w-4xl">
+      <div className="w-full px-4 py-8">
         <div className="bg-white p-8 rounded-lg shadow-md">
           <h1 className="text-3xl font-bold text-gray-800 mb-6">Nylas Email Task Extractor</h1>
           
