@@ -1,0 +1,110 @@
+'use client';
+
+import { useState, useEffect } from 'react';
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+
+export default function Header() {
+  const [userEmail, setUserEmail] = useState<string>('');
+  const pathname = usePathname();
+
+  useEffect(() => {
+    // Function to retrieve email from various sources
+    const getUserEmail = () => {
+      // Check localStorage first
+      const storedEmail = localStorage.getItem('userEmail');
+      if (storedEmail) {
+        setUserEmail(storedEmail);
+        return;
+      }
+
+      // Check cookies if localStorage doesn't have it
+      const cookies = document.cookie.split(';');
+      for (const cookie of cookies) {
+        const [name, value] = cookie.trim().split('=');
+        if (name === 'userEmail' || name === 'nylasUserEmail') {
+          setUserEmail(value);
+          // Also store in localStorage for future use
+          localStorage.setItem('userEmail', value);
+          return;
+        }
+      }
+    };
+
+    getUserEmail();
+
+    // Listen for a custom event that might be triggered when email is updated
+    const handleEmailUpdate = (event: CustomEvent) => {
+      if (event.detail && event.detail.email) {
+        setUserEmail(event.detail.email);
+        localStorage.setItem('userEmail', event.detail.email);
+      }
+    };
+
+    window.addEventListener('userEmailUpdated' as any, handleEmailUpdate);
+
+    return () => {
+      window.removeEventListener('userEmailUpdated' as any, handleEmailUpdate);
+    };
+  }, []);
+
+  return (
+    <header className="bg-white shadow-sm">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex justify-between h-16 items-center">
+          <div className="flex">
+            <div className="flex-shrink-0 flex items-center">
+              <Link href="/" className="text-xl font-bold text-indigo-600">
+                Friday Next
+              </Link>
+            </div>
+            <nav className="ml-6 flex space-x-4">
+              <Link
+                href="/"
+                className={`px-3 py-2 rounded-md text-sm font-medium ${
+                  pathname === '/' 
+                    ? 'bg-indigo-100 text-indigo-700' 
+                    : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700'
+                }`}
+              >
+                Home
+              </Link>
+              <Link
+                href="/calendar"
+                className={`px-3 py-2 rounded-md text-sm font-medium ${
+                  pathname === '/calendar' 
+                    ? 'bg-indigo-100 text-indigo-700' 
+                    : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700'
+                }`}
+              >
+                Calendar
+              </Link>
+            </nav>
+          </div>
+          <div className="flex items-center">
+            {userEmail ? (
+              <div className="flex items-center">
+                <div className="mr-3 text-sm text-gray-500">
+                  <span>Signed in as </span>
+                  <span className="font-semibold text-gray-700">{decodeURIComponent(userEmail)}</span>
+                </div>
+                <img
+                  className="h-8 w-8 rounded-full bg-gray-200"
+                  src={`https://www.gravatar.com/avatar/${Buffer.from(decodeURIComponent(userEmail)).toString('hex')}?d=identicon`}
+                  alt="User avatar"
+                />
+              </div>
+            ) : (
+              <Link
+                href="/api/nylas/authorize"
+                className="ml-3 inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+              >
+                Connect Calendar
+              </Link>
+            )}
+          </div>
+        </div>
+      </div>
+    </header>
+  );
+}

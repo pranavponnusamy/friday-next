@@ -50,6 +50,7 @@ interface Task {
   task_type: 'meeting_scheduling' | 'reminder' | 'to_do_item';
   priority: number;
   context: string;
+  duration: number; // Estimated duration in minutes
 }
 
 interface TaskValidationResult {
@@ -74,6 +75,11 @@ function validateTask(task: unknown): TaskValidationResult {
   // Task type validation
   if (!taskObj.task_type || !Object.values(TASK_TYPES).includes(taskObj.task_type as string)) {
     return { valid: false, error: `Task type must be one of: ${Object.values(TASK_TYPES).join(', ')}` };
+  }
+  
+  // Ensure duration is a number if present (default to 30 minutes if missing)
+  if (taskObj.duration !== undefined && (typeof taskObj.duration !== 'number' || taskObj.duration <= 0)) {
+    return { valid: false, error: 'Duration must be a positive number of minutes' };
   }
   
   return { valid: true };
@@ -185,7 +191,8 @@ export async function GET(request: NextRequest) {
           deadline: "Thursday EOD",
           task_type: "to_do_item",
           priority: 5,
-          context: "For final project review"
+          context: "For final project review",
+          duration: 120 // 2 hours
         }
       ];
       
@@ -274,6 +281,12 @@ Each task object should have the following properties:
 - task_type: The type of task, must be one of ["meeting_scheduling", "reminder", "to_do_item"]
 - priority: A priority level from 1-5, where 5 is highest priority
 - context: Any additional relevant context for the task
+- duration: Estimated time needed to complete the task in minutes (e.g., 30, 60, 120)
+
+For the duration field, analyze the complexity of the task and provide a reasonable estimate. For example:
+- Quick tasks like sending a brief email might be 15-30 minutes
+- Meeting preparation might be 60 minutes
+- More complex tasks might be 120+ minutes
 
 Format your response ONLY as valid JSON with these fields, nothing else.
 `;
@@ -335,7 +348,8 @@ Format your response ONLY as valid JSON with these fields, nothing else.
             deadline: "As soon as possible",
             task_type: "to_do_item",
             priority: 5,
-            context: "To see your real emails and tasks"
+            context: "To see your real emails and tasks",
+            duration: 30 // 30 minutes
           }],
           currentIndex: index,
           totalEmails: mockEmails.length,
@@ -354,7 +368,8 @@ Format your response ONLY as valid JSON with these fields, nothing else.
           deadline: "As soon as possible",
           task_type: "to_do_item",
           priority: 5,
-          context: `Error: ${errorMessage}`
+          context: `Error: ${errorMessage}`,
+          duration: 15 // 15 minutes
         }],
         currentIndex: index,
         totalEmails: mockEmails.length,

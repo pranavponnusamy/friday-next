@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import Header from "./components/Header";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -27,7 +28,90 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        {children}
+        <Header />
+        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+          {children}
+        </main>
+        <script 
+          dangerouslySetInnerHTML={{
+            __html: `
+              // Initialize client-side email storage from cookies
+              document.addEventListener('DOMContentLoaded', function() {
+                try {
+                  let userEmail = '';
+                  
+                  // Get email from localStorage first
+                  userEmail = localStorage.getItem('userEmail');
+                  
+                  // If email is not in localStorage, check cookies
+                  if (!userEmail) {
+                    // Get email from cookies
+                    const getCookieValue = (name) => {
+                      const cookies = document.cookie.split(';');
+                      for (const cookie of cookies) {
+                        const [key, value] = cookie.trim().split('=');
+                        if (key === name) return value;
+                      }
+                      return '';
+                    };
+                    
+                    // Try various cookie names that might contain the email
+                    userEmail = getCookieValue('userEmail') || 
+                                getCookieValue('nylasUserEmail') ||
+                                getCookieValue('email');
+                  }
+                  
+                  // If still no email, check URL parameters (useful for OAuth redirect)
+                  if (!userEmail) {
+                    const urlParams = new URLSearchParams(window.location.search);
+                    const emailParam = urlParams.get('email');
+                    if (emailParam) {
+                      userEmail = emailParam;
+                      console.log('Email found in URL parameters:', userEmail);
+                    }
+                  }
+                  
+                  // If still no email, try to extract from nylasGrantId cookie if it exists
+                  if (!userEmail) {
+                    const grantIdCookie = getCookieValue('nylasGrantId');
+                    if (grantIdCookie && grantIdCookie.includes('@')) {
+                      userEmail = grantIdCookie;
+                      console.log('Email extracted from grant ID:', userEmail);
+                    }
+                  }
+                  
+                  // Store the email in localStorage if we found one
+                  if (userEmail) {
+                    localStorage.setItem('userEmail', userEmail);
+                    console.log('Email stored in localStorage:', userEmail);
+                    
+                    // Create a global event that components can listen for
+                    const event = new CustomEvent('userEmailUpdated', { 
+                      detail: { email: userEmail } 
+                    });
+                    window.dispatchEvent(event);
+                  } else {
+                    console.warn('No user email found in cookies or localStorage');
+                  }
+                  
+                  // Try to send the email back to the server via fetch
+                  if (userEmail) {
+                    fetch('/api/userEmail', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ email: userEmail })
+                    }).catch(e => console.error('Error sending email to server:', e));
+                  }
+                } catch (e) {
+                  console.error('Error initializing email storage:', e);
+                }
+              });
+              
+              // For debugging - output all cookies to console
+              console.log('All cookies:', document.cookie);
+            `
+          }}
+        />
       </body>
     </html>
   );

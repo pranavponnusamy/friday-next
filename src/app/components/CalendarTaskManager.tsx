@@ -80,66 +80,146 @@ export default function CalendarTaskManager({ tasks, onError }: CalendarTaskMana
 
   return (
     <div className="mb-6 p-4 bg-white border border-gray-200 rounded-md shadow-sm">
-      <h3 className="text-lg font-semibold mb-4 text-blue-900">Calendar Management</h3>
-      
-      {loadingCalendars ? (
-        <div className="text-gray-600">Loading calendars...</div>
-      ) : calendars.length === 0 ? (
-        <div className="text-red-600">
-          No calendars available. Make sure your Nylas account is connected.
-        </div>
-      ) : (
-        <>
-          <div className="mb-4">
-            <label htmlFor="calendar-select" className="block text-sm font-medium text-gray-700 mb-1">
-              Select Calendar for All Tasks
-            </label>
-            <select
-              id="calendar-select"
-              className="block w-full p-2 border border-gray-300 rounded-md shadow-sm bg-white text-gray-800
-                focus:ring-2 focus:ring-blue-600 focus:border-blue-600 transition-all 
-                hover:border-blue-400 cursor-pointer appearance-none
-                bg-no-repeat bg-[right_0.5rem_center] bg-[length:1.5em_1.5em]
-                bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2020%2020%22%20fill%3D%22%236b7280%22%3E%3Cpath%20fill-rule%3D%22evenodd%22%20d%3D%22M5.293%207.293a1%201%200%20011.414%200L10%2010.586l3.293-3.293a1%201%200%20111.414%201.414l-4%204a1%201%200%2001-1.414%200l-4-4a1%201%200%20010-1.414z%22%20clip-rule%3D%22evenodd%22%2F%3E%3C%2Fsvg%3E')]"
-              value={selectedCalendarId}
-              onChange={(e) => setSelectedCalendarId(e.target.value)}
-            >
-              <option value="" disabled>-- Select a calendar --</option>
-              {calendars.map((calendar) => (
-                <option 
-                  key={calendar.id} 
-                  value={calendar.id} 
-                  disabled={calendar.read_only}
-                  className={calendar.read_only ? "text-gray-400 italic" : ""}
-                >
-                  {calendar.name} {calendar.read_only ? '(Read Only)' : ''}
-                </option>
-              ))}
-            </select>
+      <div className="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-md p-4 border border-indigo-200">
+        <h3 className="text-lg font-semibold mb-3 text-indigo-800">Task Calendar</h3>
+        
+        {error && (
+          <div className="p-3 mb-4 bg-red-50 border border-red-200 rounded-md">
+            <p className="text-red-700 text-sm">{error}</p>
           </div>
-          
-          {error && (
-            <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-md border border-red-200">
-              {error}
+        )}
+        
+        {loadingCalendars ? (
+          <div className="text-indigo-600">Loading calendars...</div>
+        ) : calendars.length === 0 ? (
+          <div className="text-red-600">
+            No calendars available. Make sure your Nylas account is connected.
+          </div>
+        ) : (
+          <div>
+            <div className="mb-4">
+              <label htmlFor="calendar-select" className="block text-sm font-medium text-indigo-700 mb-1">
+                Select Calendar
+              </label>
+              <select
+                id="calendar-select"
+                className="block w-full p-2 border border-indigo-300 rounded-md shadow-sm 
+                         focus:ring-indigo-500 focus:border-indigo-500 bg-white
+                         text-indigo-800"
+                value={selectedCalendarId}
+                onChange={(e) => setSelectedCalendarId(e.target.value)}
+              >
+                <option value="">Select a calendar...</option>
+                {calendars.map((calendar) => (
+                  <option key={calendar.id} value={calendar.id} disabled={calendar.read_only} 
+                         className={calendar.read_only ? "text-gray-400" : "text-indigo-800"}>
+                    {calendar.name} {calendar.read_only ? '(Read Only)' : ''}
+                  </option>
+                ))}
+              </select>
             </div>
-          )}
-        </>
-      )}
+            
+            <div className="space-y-3">
+              {tasks.map((task, index) => (
+                <div key={index} className="bg-white p-3 border border-indigo-200 rounded-md shadow-sm hover:shadow transition-shadow">
+                  <p className="text-indigo-800 font-medium mb-2">{task.description}</p>
+                  {task.deadline && (
+                    <p className="text-sm text-gray-800 mb-2">
+                      <strong>Due:</strong> {task.deadline}
+                    </p>
+                  )}
+                  <button
+                    className="w-full py-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-md shadow-sm"
+                    onClick={() => handleAddTaskToCalendar(task, selectedCalendarId, setError, () => {}, onError)}
+                  >
+                    Add to Calendar
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
-export const handleAddTaskToCalendar = async (task: Task, selectedCalendarId: string, setError: (error: string | null) => void, onSuccess?: (message: string) => void, onError?: (message: string) => void) => {
-  if (!selectedCalendarId) {
+export const handleAddTaskToCalendar = async (
+  task: Task, 
+  calendarId: string, 
+  setError: (error: string | null) => void,
+  onSuccess?: (message: string, task?: Task) => void,
+  onError?: (message: string) => void
+) => {
+  if (!calendarId) {
     const errorMsg = 'Please select a calendar first';
     setError(errorMsg);
     if (onError) onError(errorMsg);
     return;
   }
+
+  setError(null);
   
   try {
-    setError(null);
+    // DEBUGGING - log all cookie values
+    console.log("All cookies:", document.cookie);
     
+    // Get user email from various possible sources
+    let userEmail = '';
+    
+    // Try to get from localStorage first
+    userEmail = localStorage.getItem('userEmail') || '';
+    console.log("Email from localStorage:", userEmail);
+    
+    // If not in localStorage, try to get from cookies
+    if (!userEmail) {
+      const cookies = document.cookie.split(';').reduce((acc, cookie) => {
+        const [key, value] = cookie.trim().split('=');
+        acc[key] = value;
+        return acc;
+      }, {} as Record<string, string>);
+      
+      userEmail = cookies.email || cookies.userEmail || cookies.nylasUserEmail || '';
+      console.log("Email from cookies:", userEmail, "Available cookie keys:", Object.keys(cookies));
+    }
+    
+    // If still no email, try to get from Nylas grant ID cookie which might contain the email
+    if (!userEmail) {
+      try {
+        const nylasGrantCookie = document.cookie
+          .split(';')
+          .find(cookie => cookie.trim().startsWith('nylasGrantId='));
+          
+        if (nylasGrantCookie) {
+          // Some implementations store email in the grant ID format
+          const grantValue = nylasGrantCookie.split('=')[1];
+          console.log("Grant value from cookie:", grantValue);
+          if (grantValue && grantValue.includes('@')) {
+            userEmail = grantValue;
+            console.log("Using email from grant ID:", userEmail);
+          }
+        } else {
+          console.log("No nylasGrantId cookie found");
+        }
+      } catch (e) {
+        console.error('Error parsing Nylas grant cookie:', e);
+      }
+    }
+    
+    // DEBUGGING - Hard-code a test email if nothing else works
+    if (!userEmail) {
+      // For development/testing - use a real email pattern
+      userEmail = 'test@example.com';
+      console.warn('⚠️ FALLBACK: Using hard-coded test email as no user email was found');
+    }
+    
+    console.log(`Final email being used for scheduling: "${userEmail}"`);
+    
+    // DEBUGGING - Check for nylasGrantId in localStorage as well
+    const storedGrantId = localStorage.getItem('nylasGrantId');
+    console.log("Grant ID from localStorage:", storedGrantId);
+    
+    // Create calendar event
     const response = await fetch('/api/nylas/create-calendar-event', {
       method: 'POST',
       headers: {
@@ -147,22 +227,26 @@ export const handleAddTaskToCalendar = async (task: Task, selectedCalendarId: st
       },
       body: JSON.stringify({
         task,
-        calendarId: selectedCalendarId,
+        calendarId,
+        email: userEmail
       }),
     });
+
+    const responseData = await response.json();
     
     if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.error || 'Failed to create calendar event');
+      throw new Error(responseData.error || 'Failed to add task to calendar');
     }
+
+    console.log('Task added to calendar:', responseData);
     
-    // Successfully created the event
-    await response.json(); // Consume the response body
-    const successMsg = `Task "${task.description}" added to calendar successfully!`;
-    if (onSuccess) onSuccess(successMsg);
-  } catch (err) {
-    const errorMessage = err instanceof Error ? err.message : 'Failed to add task to calendar';
-    setError(errorMessage);
-    if (onError) onError(errorMessage);
+    if (onSuccess) {
+      onSuccess(responseData.message || 'Task added to calendar successfully', task);
+    }
+  } catch (error) {
+    console.error('Error adding task to calendar:', error);
+    const errorMsg = error instanceof Error ? error.message : 'Unknown error occurred';
+    setError(errorMsg);
+    if (onError) onError(errorMsg);
   }
 };

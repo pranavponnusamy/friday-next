@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import TimePreferenceSelector, { TimePreference, TIME_PREFERENCES } from './TimePreferenceSelector';
 
 interface Task {
   description: string;
@@ -32,6 +33,7 @@ export default function TaskCalendarScheduler({ task, onSuccess, onError }: Task
   const [calendarLoading, setCalendarLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [timePreference, setTimePreference] = useState<TimePreference>(TIME_PREFERENCES[0]); // Default to "Any time"
 
   // Fetch available calendars when the component mounts
   useEffect(() => {
@@ -89,6 +91,7 @@ export default function TaskCalendarScheduler({ task, onSuccess, onError }: Task
         body: JSON.stringify({
           task,
           calendarId: selectedCalendarId,
+          timePreference: timePreference // Pass the selected time preference
         }),
       });
       
@@ -147,6 +150,13 @@ export default function TaskCalendarScheduler({ task, onSuccess, onError }: Task
                 </option>
               ))}
             </select>
+          </div>
+          
+          <div className="mb-4">
+            <TimePreferenceSelector
+              selectedPreference={timePreference}
+              onChange={setTimePreference}
+            />
           </div>
           
           <button
