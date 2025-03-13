@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import Nylas from 'nylas';
 import { cookies } from 'next/headers';
 
@@ -8,7 +8,27 @@ const nylas = new Nylas({
   apiUri: process.env.NYLAS_API_URI || 'https://api.us.nylas.com',
 });
 
-export async function GET(request: NextRequest) {
+// Define the type for our frontend calendar format
+interface FrontendCalendar {
+  id: string;
+  name: string;
+  description: string;
+  read_only: boolean;
+  location: string;
+  timezone: string;
+}
+
+// Interface for handling Nylas calendar data sources
+interface NylasCalendarBasic {
+  id: string;
+  name?: string | null;
+  description?: string | null;
+  readOnly?: boolean;
+  location?: string | null;
+  timezone?: string | null;
+}
+
+export async function GET() {
   try {
     // Get cookies to check for Nylas grant ID
     const cookieStore = await cookies();
@@ -30,57 +50,51 @@ export async function GET(request: NextRequest) {
     });
     
     // Process the response to extract calendar info
-    let calendars = [];
+    let calendars: FrontendCalendar[] = [];
     
     if (calendarsResponse && typeof calendarsResponse === 'object' && 'data' in calendarsResponse) {
       // Handle response with data property
       const data = calendarsResponse.data;
       if (Array.isArray(data)) {
-        calendars = data.map(calendar => ({
+        calendars = data.map((calendar: NylasCalendarBasic) => ({
           id: calendar.id,
           name: calendar.name || 'Unnamed Calendar',
           description: calendar.description || '',
-          read_only: calendar.read_only || false,
+          read_only: calendar.readOnly || false,
           location: calendar.location || '',
           timezone: calendar.timezone || 'UTC',
         }));
       }
     } else if (calendarsResponse && Symbol.iterator in Object(calendarsResponse)) {
       // Handle iterable response
-      calendars = Array.from(calendarsResponse as Iterable<any>).map(calendar => ({
+      calendars = Array.from(calendarsResponse as Iterable<NylasCalendarBasic>).map((calendar: NylasCalendarBasic) => ({
         id: calendar.id,
         name: calendar.name || 'Unnamed Calendar',
         description: calendar.description || '',
-        read_only: calendar.read_only || false,
+        read_only: calendar.readOnly || false,
         location: calendar.location || '',
         timezone: calendar.timezone || 'UTC',
       }));
     } else if (Array.isArray(calendarsResponse)) {
       // Handle array response directly
-      calendars = calendarsResponse.map(calendar => ({
+      calendars = (calendarsResponse as NylasCalendarBasic[]).map((calendar) => ({
         id: calendar.id,
         name: calendar.name || 'Unnamed Calendar',
         description: calendar.description || '',
-        read_only: calendar.read_only || false,
+        read_only: calendar.readOnly || false,
         location: calendar.location || '',
         timezone: calendar.timezone || 'UTC',
       }));
     }
     
-    if (calendars.length === 0) {
-      console.log("No calendars found");
-      return NextResponse.json({ 
-        message: 'No calendars found',
-        calendars: [] 
-      });
-    }
+    return NextResponse.json({
+      success: true,
+      calendars,
+    });
     
-    console.log(`Found ${calendars.length} calendars`);
-    return NextResponse.json({ calendars });
-    
-  } catch (error) {
+  } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.error("Error fetching calendars from Nylas:", error);
+    console.error("Error fetching calendars:", error);
     return NextResponse.json({ error: `Failed to fetch calendars: ${errorMessage}` }, { status: 500 });
   }
 }

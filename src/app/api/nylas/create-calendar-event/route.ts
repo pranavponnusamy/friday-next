@@ -21,6 +21,18 @@ interface CreateEventRequest {
   calendarId: string;
 }
 
+// Define the CreateEventRequestWithColor type to include the color property
+interface CreateEventRequestWithColor {
+  title: string;
+  description: string;
+  when: {
+    startTime: number;
+    endTime: number;
+  };
+  busy: boolean;
+  color: string;
+}
+
 export async function POST(request: NextRequest) {
   try {
     // Get cookies to check for Nylas grant ID
@@ -57,7 +69,7 @@ export async function POST(request: NextRequest) {
           // Set start time to 1 hour before end time
           startTime = endTime - 3600;
         }
-      } catch (parseError) {
+      } catch {
         console.warn("Could not parse deadline date:", task.deadline);
         // Keep using default times
       }
@@ -85,9 +97,8 @@ export async function POST(request: NextRequest) {
           endTime: endTime,
         },
         busy: true,
-        // Set calendar color based on priority
         color: getPriorityColor(task.priority),
-      },
+      } as CreateEventRequestWithColor, // Use custom type with color property
       queryParams: {
         calendarId: calendarId,
       },
@@ -99,7 +110,7 @@ export async function POST(request: NextRequest) {
       event 
     });
     
-  } catch (error) {
+  } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     console.error("Error creating event:", error);
     return NextResponse.json({ error: `Failed to create event: ${errorMessage}` }, { status: 500 });

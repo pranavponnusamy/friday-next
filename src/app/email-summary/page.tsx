@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import CalendarTaskManager from '../components/CalendarTaskManager';
 
 interface EmailData {
   id: string;
@@ -36,6 +35,15 @@ interface ProcessedEmailResponse {
   taskErrors?: string[];
 }
 
+interface Calendar {
+  id: string;
+  name: string;
+  description?: string;
+  read_only?: boolean;
+  location?: string;
+  timezone?: string;
+}
+
 export default function EmailSummary() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -47,7 +55,7 @@ export default function EmailSummary() {
 
   // State for managing calendar functionality
   const [selectedCalendarId, setSelectedCalendarId] = useState<string>('');
-  const [calendars, setCalendars] = useState<any[]>([]);
+  const [calendars, setCalendars] = useState<Calendar[]>([]);
   const [calendarLoading, setCalendarLoading] = useState(true);
   const [addingTaskIds, setAddingTaskIds] = useState<Set<number>>(new Set());
   const [calendarError, setCalendarError] = useState<string | null>(null);
@@ -218,7 +226,8 @@ export default function EmailSummary() {
         throw new Error(errorData.error || 'Failed to create calendar event');
       }
       
-      const data = await response.json();
+      // Successfully created the event
+      await response.json(); // Consume the response body
       setCalendarSuccess(`Task "${task.description}" added to calendar successfully!`);
       
       // Clear success message after 3 seconds
@@ -257,9 +266,9 @@ export default function EmailSummary() {
         if (data.calendars && Array.isArray(data.calendars)) {
           setCalendars(data.calendars);
           // Auto-select the first calendar if available
-          if (data.calendars.length > 0 && data.calendars.some(cal => !cal.read_only)) {
+          if (data.calendars.length > 0 && data.calendars.some((cal: { read_only?: boolean }) => !cal.read_only)) {
             // Find first non-read-only calendar
-            const firstWritableCalendar = data.calendars.find((cal: any) => !cal.read_only);
+            const firstWritableCalendar = data.calendars.find((cal: { read_only?: boolean; id: string }) => !cal.read_only);
             if (firstWritableCalendar) {
               setSelectedCalendarId(firstWritableCalendar.id);
             } else {

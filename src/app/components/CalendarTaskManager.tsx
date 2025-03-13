@@ -21,15 +21,13 @@ interface Calendar {
 
 interface CalendarTaskManagerProps {
   tasks: Task[];
-  onSuccess?: (message: string) => void;
   onError?: (message: string) => void;
 }
 
-export default function CalendarTaskManager({ tasks, onSuccess, onError }: CalendarTaskManagerProps) {
+export default function CalendarTaskManager({ tasks, onError }: CalendarTaskManagerProps) {
   const [calendars, setCalendars] = useState<Calendar[]>([]);
   const [selectedCalendarId, setSelectedCalendarId] = useState<string>('');
   const [loadingCalendars, setLoadingCalendars] = useState(true);
-  const [addingTaskIds, setAddingTaskIds] = useState<Set<number>>(new Set());
   const [error, setError] = useState<string | null>(null);
 
   // Fetch available calendars when the component mounts
@@ -74,52 +72,6 @@ export default function CalendarTaskManager({ tasks, onSuccess, onError }: Calen
     
     fetchCalendars();
   }, [onError]);
-
-  const handleAddTaskToCalendar = async (task: Task, taskIndex: number) => {
-    if (!selectedCalendarId) {
-      const errorMsg = 'Please select a calendar first';
-      setError(errorMsg);
-      if (onError) onError(errorMsg);
-      return;
-    }
-    
-    try {
-      // Mark this task as being added
-      setAddingTaskIds(prev => new Set([...prev, taskIndex]));
-      setError(null);
-      
-      const response = await fetch('/api/nylas/create-calendar-event', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          task,
-          calendarId: selectedCalendarId,
-        }),
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to create calendar event');
-      }
-      
-      const data = await response.json();
-      const successMsg = `Task "${task.description}" added to calendar successfully!`;
-      if (onSuccess) onSuccess(successMsg);
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to add task to calendar';
-      setError(errorMessage);
-      if (onError) onError(errorMessage);
-    } finally {
-      // Remove this task from the loading state
-      setAddingTaskIds(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(taskIndex);
-        return newSet;
-      });
-    }
-  };
 
   // If there are no tasks, don't render anything
   if (!tasks || tasks.length === 0) {
@@ -176,3 +128,41 @@ export default function CalendarTaskManager({ tasks, onSuccess, onError }: Calen
     </div>
   );
 }
+
+export const handleAddTaskToCalendar = async (task: Task, selectedCalendarId: string, setError: (error: string | null) => void, onSuccess?: (message: string) => void, onError?: (message: string) => void) => {
+  if (!selectedCalendarId) {
+    const errorMsg = 'Please select a calendar first';
+    setError(errorMsg);
+    if (onError) onError(errorMsg);
+    return;
+  }
+  
+  try {
+    setError(null);
+    
+    const response = await fetch('/api/nylas/create-calendar-event', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        task,
+        calendarId: selectedCalendarId,
+      }),
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Failed to create calendar event');
+    }
+    
+    // Successfully created the event
+    await response.json(); // Consume the response body
+    const successMsg = `Task "${task.description}" added to calendar successfully!`;
+    if (onSuccess) onSuccess(successMsg);
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : 'Failed to add task to calendar';
+    setError(errorMessage);
+    if (onError) onError(errorMessage);
+  }
+};

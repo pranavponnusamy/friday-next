@@ -97,7 +97,8 @@ export default function TaskCalendarScheduler({ task, onSuccess, onError }: Task
         throw new Error(errorData.error || 'Failed to create calendar event');
       }
       
-      const data = await response.json();
+      // Successfully created the event
+      await response.json(); // Consume the response body
       const successMsg = 'Task added to calendar successfully!';
       setSuccess(successMsg);
       if (onSuccess) onSuccess(successMsg);
