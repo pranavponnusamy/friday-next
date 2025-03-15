@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { cookies } from 'next/headers';
 
 export async function GET() {
   // The Clear-Site-Data header is the most important part for logout

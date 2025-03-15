@@ -70,162 +70,6 @@ export default function EmailSummary() {
   const prefetchRange = 10; // Increased prefetch range for better responsiveness
   const prefetchThreshold = 8; // Start prefetching next batch when we reach this index
 
-  // Function to prefetch next batch of emails when approaching threshold
-  const prefetchNextBatch = useCallback(async (currentIdx: number, totalEmails: number) => {
-    setPrefetchingNext(true);
-    
-    // Prefetch the next 10 emails beyond current position
-    const batchSize = 10;
-    const startIdx = currentIdx + 1;
-    const endIdx = Math.min(startIdx + batchSize, totalEmails);
-    
-    console.log(`Prefetching next batch of emails from ${startIdx} to ${endIdx-1}`);
-    
-    // Create array of indices to prefetch
-    const indicesToPrefetch = [];
-    for (let i = startIdx; i < endIdx; i++) {
-      if (!cachedEmails[i]) {
-        indicesToPrefetch.push(i);
-      }
-    }
-    
-    if (indicesToPrefetch.length === 0) {
-      setPrefetchingNext(false);
-      return; // Nothing to prefetch
-    }
-    
-    // Prefetch all emails in parallel
-    const prefetchPromises = indicesToPrefetch.map(async (idx) => {
-      try {
-        const prefetchResponse = await fetch(`/api/nylas/process-email?index=${idx}`);
-        
-        if (prefetchResponse.ok) {
-          const prefetchData = await prefetchResponse.json();
-          
-          // Add to cache
-          setCachedEmails(prev => ({ ...prev, [idx]: prefetchData }));
-        }
-      } catch (err) {
-        console.error(`Error prefetching email at index ${idx}:`, err);
-      }
-    });
-    
-    try {
-      await Promise.all(prefetchPromises);
-      console.log(`Prefetched ${indicesToPrefetch.length} emails successfully`);
-    } catch (err) {
-      console.error('Error during batch prefetching:', err);
-    } finally {
-      setPrefetchingNext(false);
-    }
-  }, [cachedEmails, setCachedEmails]);
-
-  // Function to prefetch adjacent emails
-  const prefetchAdjacentEmails = useCallback(async (index: number, totalEmails: number) => {
-    // Prefetch the next and previous emails if they're not already cached
-    const adjacentIndices = [];
-    
-    // Check next index
-    if (index + 1 < totalEmails && !cachedEmails[index + 1]) {
-      adjacentIndices.push(index + 1);
-    }
-    
-    // Check previous index
-    if (index - 1 >= 0 && !cachedEmails[index - 1]) {
-      adjacentIndices.push(index - 1);
-    }
-    
-    if (adjacentIndices.length === 0) return; // Nothing to prefetch
-    
-    console.log(`Prefetching adjacent emails: ${adjacentIndices.join(', ')}`);
-    
-    // Prefetch adjacent emails in parallel
-    const prefetchPromises = adjacentIndices.map(async (idx) => {
-      try {
-        const prefetchResponse = await fetch(`/api/nylas/process-email?index=${idx}`);
-        
-        if (prefetchResponse.ok) {
-          const prefetchData = await prefetchResponse.json();
-          
-          // Add to cache
-          setCachedEmails(prev => ({ ...prev, [idx]: prefetchData }));
-        }
-      } catch (err) {
-        console.error(`Error prefetching email at index ${idx}:`, err);
-      }
-    });
-    
-    try {
-      await Promise.all(prefetchPromises);
-    } catch (err) {
-      console.error('Error during adjacent email prefetching:', err);
-    }
-  }, [cachedEmails, setCachedEmails]);
-
-  // Optimized navigation function
-  const navigateToEmail = useCallback(async (index: number) => {
-    // Exit early if we're already at this index
-    if (index === currentIndex) return;
-    
-    // Start transition effect
-    setIsTransitioning(true);
-    setLoading(true); // Show loading state during navigation
-    
-    // Use cached email if available
-    if (cachedEmails[index]) {
-      // Short timeout to allow transition effect
-      setTimeout(() => {
-        setEmailData(cachedEmails[index]);
-        setCurrentIndex(index);
-        setIsTransitioning(false);
-        setLoading(false); // Hide loading state
-        
-        // Check if we're approaching the threshold to prefetch more emails
-        if (index >= prefetchThreshold && emailData?.totalEmails && index < emailData.totalEmails - 2) {
-          // Trigger prefetching of next batch
-          prefetchNextBatch(index, emailData.totalEmails);
-        } else {
-          // Otherwise, just prefetch adjacent emails
-          prefetchAdjacentEmails(index, emailData?.totalEmails || 0);
-        }
-      }, 10);
-    } else {
-      try {
-        // If not cached, fetch it
-        const response = await fetch(`/api/nylas/process-email?index=${index}`);
-        
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || 'Failed to fetch email data');
-        }
-        
-        const data = await response.json();
-        
-        // Add to cache
-        setCachedEmails(prev => ({ ...prev, [index]: data }));
-        
-        // Update state
-        setEmailData(data);
-        setCurrentIndex(index);
-        
-        // Check if we're approaching the threshold to prefetch more emails
-        if (index >= prefetchThreshold && data.totalEmails && index < data.totalEmails - 2) {
-          // Trigger prefetching of next batch
-          prefetchNextBatch(index, data.totalEmails);
-        } else {
-          // Otherwise, just prefetch adjacent emails
-          prefetchAdjacentEmails(index, data.totalEmails);
-        }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'An error occurred while fetching email data');
-        console.error(`Error navigating to email:`, err);
-      } finally {
-        setIsTransitioning(false);
-        setLoading(false); // Hide loading state
-      }
-    }
-  }, [cachedEmails, currentIndex, emailData?.totalEmails, prefetchAdjacentEmails, prefetchNextBatch]);
-
   // Initial load with aggressive prefetching
   useEffect(() => {
     const loadInitialEmails = async () => {
@@ -300,7 +144,210 @@ export default function EmailSummary() {
     
     setLoading(true);
     loadInitialEmails();
-  }, [cachedEmails, currentIndex]); // Add missing dependencies
+  }, []); // Only run once on initial load, not when currentIndex changes
+
+  // Optimized navigation function
+  const navigateToEmail = useCallback(async (index: number) => {
+    // Exit early if we're already at this index
+    if (index === currentIndex) return;
+    
+    // Start transition effect
+    setIsTransitioning(true);
+    setLoading(true); // Show loading state during navigation
+    
+    // Use cached email if available
+    if (cachedEmails[index]) {
+      // Short timeout to allow transition effect
+      setTimeout(() => {
+        setEmailData(cachedEmails[index]);
+        setCurrentIndex(index);
+        setIsTransitioning(false);
+        setLoading(false); // Hide loading state
+        
+        // Check if we're approaching the threshold to prefetch more emails
+        if (index >= prefetchThreshold && emailData?.totalEmails && index < emailData.totalEmails - 2) {
+          // Trigger prefetching of next batch
+          prefetchNextBatch(index, emailData.totalEmails);
+        } else {
+          // Otherwise, just prefetch adjacent emails
+          prefetchAdjacentEmails(index, emailData?.totalEmails || 0);
+        }
+      }, 10);
+    } else {
+      try {
+        // If not cached, fetch it
+        const response = await fetch(`/api/nylas/process-email?index=${index}`);
+        
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'Failed to fetch email data');
+        }
+        
+        const data = await response.json();
+        
+        // Add to cache
+        setCachedEmails(prev => ({ ...prev, [index]: data }));
+        
+        // Update state
+        setEmailData(data);
+        setCurrentIndex(index);
+        
+        // Check if we're approaching the threshold to prefetch more emails
+        if (index >= prefetchThreshold && data.totalEmails && index < data.totalEmails - 2) {
+          // Trigger prefetching of next batch
+          prefetchNextBatch(index, data.totalEmails);
+        } else {
+          // Otherwise, just prefetch adjacent emails
+          prefetchAdjacentEmails(index, data.totalEmails);
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'An error occurred while fetching email data');
+        console.error(`Error navigating to email:`, err);
+      } finally {
+        setIsTransitioning(false);
+        setLoading(false); // Hide loading state
+      }
+    }
+  }, [cachedEmails, currentIndex, emailData?.totalEmails]);
+
+  // Function to prefetch next batch of emails when approaching threshold
+  const prefetchNextBatch = useCallback(async (currentIdx: number, totalEmails: number) => {
+    setPrefetchingNext(true);
+    
+    // Prefetch the next 10 emails beyond current position
+    const batchSize = 10;
+    const startIdx = currentIdx + 1;
+    const endIdx = Math.min(startIdx + batchSize, totalEmails);
+    
+    console.log(`Prefetching next batch of emails from ${startIdx} to ${endIdx-1}`);
+    
+    // Create array of indices to prefetch
+    const indicesToPrefetch = [];
+    for (let i = startIdx; i < endIdx; i++) {
+      if (!cachedEmails[i]) {
+        indicesToPrefetch.push(i);
+      }
+    }
+    
+    if (indicesToPrefetch.length === 0) {
+      setPrefetchingNext(false);
+      return; // Nothing to prefetch
+    }
+    
+    // Prefetch all emails in parallel
+    const prefetchPromises = indicesToPrefetch.map(async (idx) => {
+      try {
+        const prefetchResponse = await fetch(`/api/nylas/process-email?index=${idx}`);
+        
+        if (prefetchResponse.ok) {
+          const prefetchData = await prefetchResponse.json();
+          
+          // Add to cache
+          setCachedEmails(prev => ({ ...prev, [idx]: prefetchData }));
+        }
+      } catch (err) {
+        console.error(`Error prefetching email at index ${idx}:`, err);
+      }
+    });
+    
+    // Run all prefetch operations in parallel
+    await Promise.all(prefetchPromises);
+    
+    setPrefetchingNext(false);
+  }, [cachedEmails]);
+
+  // Function to prefetch adjacent emails
+  const prefetchAdjacentEmails = useCallback(async (index: number, totalEmails: number) => {
+    setPrefetchingNext(true);
+    
+    // Create an array of indices to prefetch
+    const indicesToPrefetch = [];
+    
+    // Prioritize the immediate next and previous
+    if (index + 1 < totalEmails) indicesToPrefetch.push(index + 1);
+    if (index - 1 >= 0) indicesToPrefetch.push(index - 1);
+    
+    // Then add the rest in order of priority
+    for (let i = 2; i <= prefetchRange; i++) {
+      if (index + i < totalEmails) indicesToPrefetch.push(index + i);
+      if (index - i >= 0) indicesToPrefetch.push(index - i);
+    }
+    
+    // Filter out already cached emails
+    const emailsToFetch = indicesToPrefetch.filter(idx => !cachedEmails[idx]);
+    
+    if (emailsToFetch.length === 0) {
+      setPrefetchingNext(false);
+      return; // Nothing to prefetch
+    }
+    
+    // Prefetch all emails in parallel
+    const prefetchPromises = emailsToFetch.map(async (idx) => {
+      try {
+        const prefetchResponse = await fetch(`/api/nylas/process-email?index=${idx}`);
+        
+        if (prefetchResponse.ok) {
+          const prefetchData = await prefetchResponse.json();
+          
+          // Add to cache
+          setCachedEmails(prev => ({ ...prev, [idx]: prefetchData }));
+        }
+      } catch (err) {
+        console.error(`Error prefetching email at index ${idx}:`, err);
+      }
+    });
+    
+    // Run all prefetch operations in parallel
+    await Promise.all(prefetchPromises);
+    
+    setPrefetchingNext(false);
+  }, [cachedEmails, prefetchRange]);
+
+  const handleNext = useCallback(() => {
+    if (emailData && currentIndex < emailData.totalEmails - 1) {
+      navigateToEmail(currentIndex + 1);
+    }
+  }, [currentIndex, emailData, navigateToEmail]);
+
+  const handlePrevious = useCallback(() => {
+    if (currentIndex > 0) {
+      navigateToEmail(currentIndex - 1);
+    }
+  }, [currentIndex, navigateToEmail]);
+
+  // Simplified fetchProcessedEmail for navigation after initial load
+  const fetchProcessedEmail = useCallback(async (index: number) => {
+    try {
+      setLoading(true);
+      
+      // Check if we have this email in the cache
+      if (cachedEmails[index]) {
+        console.log(`Using cached email for index ${index}`);
+        setEmailData(cachedEmails[index]);
+        return;
+      }
+      
+      // If not in cache, fetch it
+      const response = await fetch(`/api/nylas/process-email?index=${index}`);
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to fetch email data');
+      }
+      
+      const data = await response.json();
+      console.log(`Fetched email data for index ${index}:`, data);
+      
+      // Add to cache
+      setCachedEmails(prev => ({ ...prev, [index]: data }));
+      setEmailData(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred while fetching email data');
+      console.error(`Error fetching processed email:`, err);
+    } finally {
+      setLoading(false);
+    }
+  }, [cachedEmails]);
 
   // Prefetch the next email when the current one loads
   useEffect(() => {
@@ -308,16 +355,16 @@ export default function EmailSummary() {
       const nextIndex = currentIndex + 1;
       if (!cachedEmails[nextIndex]) {
         setPrefetchingNext(true);
-        prefetchAdjacentEmails(nextIndex, emailData.totalEmails);
+        fetchProcessedEmail(nextIndex);
       }
     }
     
     // If we're not at the beginning, also prefetch the previous email
     if (emailData && currentIndex > 0 && !cachedEmails[currentIndex - 1]) {
       setPrefetchingNext(true);
-      prefetchAdjacentEmails(currentIndex - 1, emailData.totalEmails);
+      fetchProcessedEmail(currentIndex - 1);
     }
-  }, [emailData, currentIndex, prefetchAdjacentEmails, cachedEmails]);
+  }, [emailData, currentIndex, fetchProcessedEmail, cachedEmails]);
 
   const formatDate = (timestamp: number) => {
     return new Date(timestamp * 1000).toLocaleString();
@@ -484,7 +531,7 @@ export default function EmailSummary() {
     if (!emailData?.tasks || emailData.tasks.length === 0) {
       return (
         <div className="p-4 bg-indigo-50 border border-indigo-200 rounded-md">
-          <p className="text-indigo-800 mb-4">No tasks were extracted from this email.</p>
+          <p className="text-indigo-800">No tasks were extracted from this email.</p>
         </div>
       );
     }
@@ -540,52 +587,6 @@ export default function EmailSummary() {
       </div>
     );
   };
-
-  const handleNext = useCallback(() => {
-    if (emailData && currentIndex < emailData.totalEmails - 1) {
-      navigateToEmail(currentIndex + 1);
-    }
-  }, [currentIndex, emailData, navigateToEmail]);
-
-  const handlePrevious = useCallback(() => {
-    if (currentIndex > 0) {
-      navigateToEmail(currentIndex - 1);
-    }
-  }, [currentIndex, navigateToEmail]);
-
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const fetchProcessedEmail = useCallback(async (index: number) => {
-    try {
-      setLoading(true);
-      
-      // Check if we have this email in the cache
-      if (cachedEmails[index]) {
-        console.log(`Using cached email for index ${index}`);
-        setEmailData(cachedEmails[index]);
-        return;
-      }
-      
-      // If not in cache, fetch it
-      const response = await fetch(`/api/nylas/process-email?index=${index}`);
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to fetch email data');
-      }
-      
-      const data = await response.json();
-      console.log(`Fetched email data for index ${index}:`, data);
-      
-      // Add to cache
-      setCachedEmails(prev => ({ ...prev, [index]: data }));
-      setEmailData(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred while fetching email data');
-      console.error(`Error fetching processed email:`, err);
-    } finally {
-      setLoading(false);
-    }
-  }, [cachedEmails]);
 
   if (loading && !emailData) {
     return (

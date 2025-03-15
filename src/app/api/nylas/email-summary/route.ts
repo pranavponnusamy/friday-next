@@ -23,7 +23,9 @@ const nylas = new Nylas({
 });
 
 // Process a single email independently - allows for parallel processing
-async function processEmail(email: NylasEmail): Promise<NylasEmail> {
+async function processEmail(email: NylasEmail, 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  grantId: string): Promise<NylasEmail> {
   try {
     // You could add additional processing logic here if needed
     return email;
@@ -66,7 +68,7 @@ export async function GET(request: NextRequest) {
           
           // Process emails in parallel using Promise.all
           emails = await Promise.all(
-            rawEmails.map(email => processEmail(email))
+            rawEmails.map(email => processEmail(email, grantId))
           );
           
           // Print out the first email for debugging
@@ -90,7 +92,7 @@ export async function GET(request: NextRequest) {
             if (tempEmails.length > 0) {
               // Process emails in parallel
               emails = await Promise.all(
-                tempEmails.map(email => processEmail(email))
+                tempEmails.map(email => processEmail(email, grantId))
               );
               
               console.log(`Successfully fetched and processed ${emails.length} emails via iteration`);
@@ -108,7 +110,7 @@ export async function GET(request: NextRequest) {
               
               // Process emails in parallel
               emails = await Promise.all(
-                rawEmails.map(email => processEmail(email))
+                rawEmails.map(email => processEmail(email, grantId))
               );
               
               console.log(`Successfully fetched and processed ${emails.length} emails from array response`);

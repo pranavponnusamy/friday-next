@@ -113,7 +113,8 @@ export const generateEmbeddings = async (text: string): Promise<number[]> => {
 export const upsertTask = async (
   taskId: string,
   taskText: string,
-  taskPayload: Record<string, unknown>
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  taskPayload: Record<string, any>
 ) => {
   await ensureCollection();
   const client = getQdrantClient();

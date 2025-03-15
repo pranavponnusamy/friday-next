@@ -122,13 +122,32 @@ function parseCombinedResponse(responseText: string): ParsedResponse {
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 interface QdrantPoint {
   id: string | number;
   version?: number;
   score?: number;
-  payload?: Record<string, unknown>;
-  vector?: unknown;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  payload?: Record<string, any> | null;
+  vector?: number[] | null;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+interface SimilarTask {
+  payload: {
+    description: string;
+    priority: number;
+    task_type: string;
+    deadline: string | null;
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+interface SimilarTasksResult {
+  success: boolean;
+  tasks: QdrantPoint[];
+  count?: number;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  error?: any;
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
@@ -178,19 +197,20 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       const searchQuery = `${email.subject} ${email.body.substring(0, 500)}`;
       console.log(`Searching for similar tasks with query: ${searchQuery.substring(0, 100)}...`);
       
-      // Use properly typed interface for similarTasksResult
-      const similarTasksResult = await searchSimilarTasks(searchQuery, 5);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const similarTasksResult = await searchSimilarTasks(searchQuery, 5) as any;
       
       // Log the entire search results for debugging
       console.log('Similar tasks search result:');
       console.log(JSON.stringify(similarTasksResult, null, 2));
       
-      // If the similarity search succeeded, format as context for the AI
-      if (similarTasksResult && similarTasksResult.success && similarTasksResult.tasks && Array.isArray(similarTasksResult.tasks)) {
-        similarTasksContext = 'Previously created tasks that might be similar:\n\n';
+      if (similarTasksResult.success && similarTasksResult.tasks && similarTasksResult.tasks.length > 0) {
+        // Format similar tasks as context for the LLM
+        similarTasksContext = `\nSimilar existing tasks that might be relevant:\n`;
         
-        // Cast to any to avoid TypeScript errors while still getting the task properties
-        similarTasksResult.tasks.forEach((task, index) => {
+        // Log each similar task in detail
+        console.log(`Found ${similarTasksResult.tasks.length} similar tasks:`);
+        similarTasksResult.tasks.forEach((task: QdrantPoint, index: number) => {
           console.log(`Task ${index + 1}:`);
           console.log(`  ID: ${task.id}`);
           console.log(`  Score: ${task.score || 'N/A'}`);

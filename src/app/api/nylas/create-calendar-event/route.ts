@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import Nylas from 'nylas';
 import { cookies } from 'next/headers';
 import { v4 as uuidv4 } from 'uuid';
-import { upsertTask, ensureCollection } from '@/utils/qdrantClient';
+import { upsertTask, 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  generateEmbeddings, 
+  ensureCollection 
+} from '@/utils/qdrantClient';
 
 // Initialize Nylas with configuration
 const nylas = new Nylas({
