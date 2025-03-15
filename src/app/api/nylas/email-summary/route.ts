@@ -22,6 +22,17 @@ const nylas = new Nylas({
   apiUri: process.env.NYLAS_API_URI || 'https://api.us.nylas.com',
 });
 
+// Process a single email independently - allows for parallel processing
+async function processEmail(email: NylasEmail): Promise<NylasEmail> {
+  try {
+    // You could add additional processing logic here if needed
+    return email;
+  } catch (error) {
+    console.error(`Error processing email ${email.id}:`, error);
+    return email; // Return the original email if processing fails
+  }
+}
+
 export async function GET(request: NextRequest) {
   try {
     const cookieStore = await cookies();
@@ -40,17 +51,23 @@ export async function GET(request: NextRequest) {
       
       // Using a more TypeScript-friendly approach for handling async responses
       try {
+        // Increased limit to 20 emails
         const messagesResponse = await nylas.messages.list({
           identifier: grantId,
           queryParams: {
-            limit: 10,
+            limit: 20, // Increased from 10 to 20 for more preloading
           },
         });
         
         // Check if it's a paginated response with data property
         if (messagesResponse && typeof messagesResponse === 'object' && 'data' in messagesResponse) {
-          emails = messagesResponse.data as unknown as NylasEmail[];
-          console.log(`Successfully fetched ${emails.length} emails from data property`);
+          const rawEmails = messagesResponse.data as unknown as NylasEmail[];
+          console.log(`Successfully fetched ${rawEmails.length} emails from data property`);
+          
+          // Process emails in parallel using Promise.all
+          emails = await Promise.all(
+            rawEmails.map(email => processEmail(email))
+          );
           
           // Print out the first email for debugging
           if (emails.length > 0) {
@@ -58,19 +75,25 @@ export async function GET(request: NextRequest) {
             console.log(JSON.stringify(emails[0], null, 2));
           }
         } else {
-          // Try to handle it as an async iterable manually
+          // Try to handle it as an async iterable manually - collecting all emails first
           const tempEmails: NylasEmail[] = [];
           
-          // Using a try-catch to handle potential iterator issues
           try {
             // @ts-expect-error - Working around TypeScript errors with the iterator
             for await (const message of messagesResponse) {
               tempEmails.push(message as unknown as NylasEmail);
+              
+              // Stop after collecting 20 emails
+              if (tempEmails.length >= 20) break;
             }
             
             if (tempEmails.length > 0) {
-              emails = tempEmails;
-              console.log(`Successfully fetched ${emails.length} emails via iteration`);
+              // Process emails in parallel
+              emails = await Promise.all(
+                tempEmails.map(email => processEmail(email))
+              );
+              
+              console.log(`Successfully fetched and processed ${emails.length} emails via iteration`);
               
               // Print out the first email for debugging
               console.log("Sample email (first in the list):");
@@ -81,8 +104,14 @@ export async function GET(request: NextRequest) {
             
             // Last attempt - check if it's directly an array
             if (Array.isArray(messagesResponse)) {
-              emails = messagesResponse as unknown as NylasEmail[];
-              console.log(`Successfully fetched ${emails.length} emails from array response`);
+              const rawEmails = (messagesResponse as unknown as NylasEmail[]).slice(0, 20);
+              
+              // Process emails in parallel
+              emails = await Promise.all(
+                rawEmails.map(email => processEmail(email))
+              );
+              
+              console.log(`Successfully fetched and processed ${emails.length} emails from array response`);
               
               // Print out the first email for debugging
               if (emails.length > 0) {
@@ -102,12 +131,12 @@ export async function GET(request: NextRequest) {
         throw new Error("Could not retrieve any emails");
       }
       
-      // Store emails in cookies for future use
+      // Store emails in cookies for future use with increased expiry
       cookieStore.set('cachedEmails', JSON.stringify(emails), { 
         path: '/',
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
-        maxAge: 60 * 60 * 1 // 1 hour
+        maxAge: 60 * 60 * 2 // 2 hours (increased from 1 hour)
       });
       
       // Get the email index from the query params

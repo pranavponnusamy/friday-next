@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Nylas from 'nylas';
 import { cookies } from 'next/headers';
+import { v4 as uuidv4 } from 'uuid';
+import { upsertTask, ensureCollection } from '@/utils/qdrantClient';
 
 // Initialize Nylas with configuration
 const nylas = new Nylas({
@@ -313,66 +315,11 @@ async function findNextAvailableSlot(
         });
       }
       
-      // First try to find a slot today that matches our time preference
-      const todayFilteredSlots = filteredTimeSlots.filter((slot) => 
-        slot.startTime >= Math.max(now, startOfToday) && 
-        slot.endTime <= endOfToday
-      );
-      
-      console.log(`Found ${todayFilteredSlots.length} available slots TODAY within the preferred time range`);
-      
-      // Log ALL of today's filtered slots
-      if (todayFilteredSlots.length > 0) {
-        console.log("All of today's slots matching the time preference:");
-        todayFilteredSlots.forEach((slot, index) => {
-          const startTime = new Date(slot.startTime * 1000);
-          console.log(`Today's preferred slot ${index}: ${startTime.toLocaleString()} (${startTime.getHours()}:${startTime.getMinutes()})`);
-        });
-      }
-      
-      // Enhanced evening preference handling (6-8 PM) - STRICT MODE
-      if (timePreference && 
-          timePreference.startHour >= 17 && timePreference.endHour <= 21 && 
-          timePreference.label.toLowerCase().includes('evening')) {
-          
-        console.log("EVENING PREFERENCE DETECTED - Using stricter evening slot selection");
-        
-        // Get truly evening slots (strict 6-8 PM time range check)
-        const eveningSlots = allTodaySlots.filter((slot) => {
-          const slotDate = new Date(slot.startTime * 1000);
-          // Specifically check for slots between 6:00 PM and 8:00 PM
-          const hours = slotDate.getHours();
-          return hours >= 18 && hours < 20;
-        });
-        
-        console.log(`Found ${eveningSlots.length} STRICT evening slots for TODAY (6-8 PM)`);
-        
-        // Log ALL strict evening slots
-        if (eveningSlots.length > 0) {
-          console.log("All strict evening slots for TODAY (6-8 PM):");
-          eveningSlots.forEach((slot, index) => {
-            const startTime = new Date(slot.startTime * 1000);
-            console.log(`Evening slot ${index}: ${startTime.toLocaleString()} (${startTime.getHours()}:${startTime.getMinutes()})`);
-          });
-          
-          // Sort by start time to get the earliest slot in the evening
-          eveningSlots.sort((a, b) => a.startTime - b.startTime);
-          const selectedSlot = eveningSlots[0];
-          const slotTime = new Date(selectedSlot.startTime * 1000);
-          
-          console.log(`Using strict evening slot at ${slotTime.toLocaleTimeString()} (${slotTime.getHours()}:${slotTime.getMinutes()})`);
-          return {
-            startTime: selectedSlot.startTime,
-            endTime: selectedSlot.endTime
-          };
-        }
-      }
-      
       // Try to find any slot today within the user's preferred time range
-      if (todayFilteredSlots.length > 0) {
+      if (filteredTimeSlots.length > 0) {
         // We have slots today! Sort them to get the earliest one
-        todayFilteredSlots.sort((a, b) => a.startTime - b.startTime);
-        const selectedSlot = todayFilteredSlots[0];
+        filteredTimeSlots.sort((a, b) => a.startTime - b.startTime);
+        const selectedSlot = filteredTimeSlots[0];
         const slotTime = new Date(selectedSlot.startTime * 1000);
         
         console.log(`Using today's preferred slot at ${slotTime.toLocaleTimeString()} (${slotTime.getHours()}:${slotTime.getMinutes()})`);
@@ -382,9 +329,50 @@ async function findNextAvailableSlot(
         };
       }
       
-      // If no preferred slots available today, try any available slot today
+      // Check if we have a time preference and should look at the next day
+      if (timePreference && timePreference.startHour !== 0 && timePreference.endHour !== 24) {
+        console.log("No slots available today in preferred time range, checking next day for preferred time slots");
+        
+        // Get tomorrow's timestamp boundaries
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const startOfTomorrow = new Date(tomorrow.getFullYear(), tomorrow.getMonth(), tomorrow.getDate()).getTime() / 1000;
+        const endOfTomorrow = startOfTomorrow + (24 * 60 * 60) - 1;
+        
+        console.log(`Tomorrow's boundaries: ${new Date(startOfTomorrow * 1000).toLocaleString()} to ${new Date(endOfTomorrow * 1000).toLocaleString()}`);
+        
+        // Filter for tomorrow's slots within preferred time range
+        const tomorrowFilteredSlots = filteredTimeSlots.filter((slot) => 
+          slot.startTime >= startOfTomorrow && 
+          slot.endTime <= endOfTomorrow
+        );
+        
+        console.log(`Found ${tomorrowFilteredSlots.length} available slots TOMORROW within the preferred time range`);
+        
+        // Log tomorrow's filtered slots
+        if (tomorrowFilteredSlots.length > 0) {
+          console.log("All of tomorrow's slots matching the time preference:");
+          tomorrowFilteredSlots.forEach((slot, index) => {
+            const startTime = new Date(slot.startTime * 1000);
+            console.log(`Tomorrow's preferred slot ${index}: ${startTime.toLocaleString()} (${startTime.getHours()}:${startTime.getMinutes()})`);
+          });
+          
+          // Sort to get the earliest preferred slot tomorrow
+          tomorrowFilteredSlots.sort((a, b) => a.startTime - b.startTime);
+          const selectedSlot = tomorrowFilteredSlots[0];
+          const slotTime = new Date(selectedSlot.startTime * 1000);
+          
+          console.log(`Using tomorrow's preferred slot at ${slotTime.toLocaleTimeString()} (${slotTime.getHours()}:${slotTime.getMinutes()})`);
+          return {
+            startTime: selectedSlot.startTime,
+            endTime: selectedSlot.endTime
+          };
+        }
+      }
+      
+      // If no slots today at preferred time and no slots tomorrow at preferred time, fall back to any slot today
       if (allTodaySlots.length > 0) {
-        console.log("No slots today within preferred time range, checking any available slot today");
+        console.log("No slots within preferred time range today or tomorrow, checking any available slot today");
         
         // If we have a time preference, try to find the slot closest to our preferred range
         if (timePreference && timePreference.startHour !== 0 && timePreference.endHour !== 24) {
@@ -544,24 +532,80 @@ export async function POST(request: NextRequest) {
     if (task.deadline) {
       try {
         // Try to parse deadline as a date string
-        const deadlineDate = new Date(task.deadline);
-        if (!isNaN(deadlineDate.getTime())) {
-          // Use the deadline as the end time
-          endTime = Math.floor(deadlineDate.getTime() / 1000);
-          // Set start time to before end time based on duration
-          startTime = endTime - (durationMinutes * 60);
+        // When a date is specified without a time, JavaScript interprets it as midnight UTC
+        // which can result in the previous day in local time zones like Eastern Time (UTC-4)
+        const deadlineParts = task.deadline.split('-');
+        
+        // Log the original deadline and the parsed parts
+        console.log(`Processing deadline: ${task.deadline}, parsed parts:`, deadlineParts);
+        
+        if (deadlineParts.length === 3) {
+          // We have a YYYY-MM-DD format, create date explicitly for the local timezone
+          // by using noon (12:00) of the specified day to avoid any timezone issues
+          const year = parseInt(deadlineParts[0], 10);
+          const month = parseInt(deadlineParts[1], 10) - 1; // Months are 0-indexed
+          const day = parseInt(deadlineParts[2], 10);
+          
+          // Create a date at noon on the specified day to avoid timezone shifts
+          const deadlineDate = new Date(year, month, day, 12, 0, 0);
+          
+          if (!isNaN(deadlineDate.getTime())) {
+            console.log(`Interpreted deadline as: ${deadlineDate.toLocaleString()}`);
+            
+            // For deadline-based tasks, we want to schedule during preferred hours
+            // rather than exactly at the deadline time
+            if (timePreference && timePreference.startHour !== 0 && timePreference.endHour !== 24) {
+              console.log(`Using time preference for deadline task: ${timePreference.label}`);
+              
+              // Create a date for the preferred start time on the deadline day
+              const preferredStartDate = new Date(year, month, day, timePreference.startHour, 0, 0);
+              
+              // Only use the preferred time if it's in the future
+              const nowTime = Date.now() / 1000;
+              const preferredStartTime = Math.floor(preferredStartDate.getTime() / 1000);
+              
+              if (preferredStartTime > nowTime) {
+                // We can use the preferred time on the deadline day
+                startTime = preferredStartTime;
+                endTime = startTime + (durationMinutes * 60);
+                
+                console.log(`Using preferred start time on deadline day: ${new Date(startTime * 1000).toLocaleString()}`);
+              } else {
+                // The preferred time has already passed, use findNextAvailableSlot
+                console.log(`Preferred time on deadline day has passed, finding next available slot`);
+                const timeSlot = await findNextAvailableSlot(
+                  grantId, 
+                  decodedEmail,
+                  durationMinutes,
+                  timePreference,
+                  calendarsToConsider
+                );
+                startTime = timeSlot.startTime;
+                endTime = timeSlot.endTime;
+              }
+            } else {
+              // No time preference specified, use noon on the deadline day
+              startTime = Math.floor(deadlineDate.getTime() / 1000);
+              endTime = startTime + (durationMinutes * 60);
+              
+              console.log(`Using noon on deadline day: ${new Date(startTime * 1000).toLocaleString()}`);
+            }
+          } else {
+            throw new Error(`Invalid date: ${task.deadline}`);
+          }
         } else {
-          // If deadline isn't a valid date, find a free slot
-          console.log(`Finding free slot for ${decodedEmail}`);
-          const timeSlot = await findNextAvailableSlot(
-            grantId, 
-            decodedEmail,
-            durationMinutes,
-            timePreference,
-            calendarsToConsider
-          );
-          startTime = timeSlot.startTime;
-          endTime = timeSlot.endTime;
+          // Not in YYYY-MM-DD format or contains time info, try standard parsing
+          const deadlineDate = new Date(task.deadline);
+          if (!isNaN(deadlineDate.getTime())) {
+            console.log(`Using exact deadline time: ${deadlineDate.toLocaleString()}`);
+            
+            // Use the deadline as the end time
+            endTime = Math.floor(deadlineDate.getTime() / 1000);
+            // Set start time to before end time based on duration
+            startTime = endTime - (durationMinutes * 60);
+          } else {
+            throw new Error(`Unable to parse deadline: ${task.deadline}`);
+          }
         }
       } catch (error) {
         console.warn("Could not parse deadline date:", task.deadline, error);
@@ -625,6 +669,43 @@ export async function POST(request: NextRequest) {
     // Format the response
     const formattedStartTime = new Date(roundedStartTime * 1000).toLocaleString();
     const formattedEndTime = new Date(bufferedEndTime * 1000).toLocaleString();
+    
+    // Store task in Qdrant
+    try {
+      // Generate a unique ID for the task
+      const taskId = uuidv4();
+      
+      // Ensure collection exists
+      await ensureCollection();
+      
+      // Prepare task payload
+      const taskPayload = {
+        ...task,
+        calendarId,
+        timePreference,
+        calendarsToConsider,
+        eventId: event.data?.id || 'unknown',
+        eventTitle,
+        startTime: roundedStartTime,
+        endTime: roundedStartTime + (durationMinutes * 60),
+        formattedStartTime,
+        formattedEndTime,
+        userEmail: decodedEmail,
+        createdAt: new Date().toISOString(),
+      };
+      
+      // Upsert task to Qdrant
+      const qdrantResult = await upsertTask(taskId, task.description, taskPayload);
+      
+      if (!qdrantResult.success) {
+        console.error("Failed to store task in Qdrant:", qdrantResult.error);
+      } else {
+        console.log("Successfully stored task in Qdrant with ID:", taskId);
+      }
+    } catch (qdrantError) {
+      console.error("Error storing task in Qdrant:", qdrantError);
+      // Don't fail the whole request if Qdrant storage fails
+    }
     
     return NextResponse.json({
       success: true,

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { searchSimilarTasks } from '@/utils/qdrantClient';
 
 // Initialize Google Generative AI
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
@@ -121,7 +122,22 @@ function parseCombinedResponse(responseText: string): ParsedResponse {
   }
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+interface QdrantPoint {
+  id: string | number;
+  version?: number;
+  score?: number;
+  payload?: Record<string, unknown> | null;
+  vector?: unknown;
+}
+
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  // Add prominent logging to help identify when this endpoint is called
+  console.log("=========================================================");
+  console.log("EXTRACT-TASKS API ENDPOINT CALLED");
+  console.log(`Timestamp: ${new Date().toISOString()}`);
+  console.log("=========================================================");
+  
   try {
     // Get cookies directly from the request headers
     const cookieHeader = request.headers.get('cookie') || '';
@@ -156,6 +172,52 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     
     const email = cachedEmails[emailIndex];
     
+    // Search for similar tasks in Qdrant based on the email subject and body
+    let similarTasksContext = '';
+    try {
+      const searchQuery = `${email.subject} ${email.body.substring(0, 500)}`;
+      console.log(`Searching for similar tasks with query: ${searchQuery.substring(0, 100)}...`);
+      
+      // Use properly typed interface for similarTasksResult
+      const similarTasksResult = await searchSimilarTasks(searchQuery, 5);
+      
+      // Log the entire search results for debugging
+      console.log('Similar tasks search result:');
+      console.log(JSON.stringify(similarTasksResult, null, 2));
+      
+      // If the similarity search succeeded, format as context for the AI
+      if (similarTasksResult && similarTasksResult.success && similarTasksResult.tasks && Array.isArray(similarTasksResult.tasks)) {
+        similarTasksContext = 'Previously created tasks that might be similar:\n\n';
+        
+        // Use type assertion to handle the response data structure
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        similarTasksResult.tasks.forEach((task: any, index: number) => {
+          console.log(`Task ${index + 1}:`);
+          console.log(`  ID: ${task.id}`);
+          console.log(`  Score: ${task.score || 'N/A'}`);
+          console.log(`  Payload: ${JSON.stringify(task.payload, null, 2)}`);
+          
+          // Add null checks for task.payload
+          if (task.payload) {
+            similarTasksContext += `${index + 1}. Description: ${task.payload.description || 'No description'}\n`;
+            similarTasksContext += `   Priority: ${task.payload.priority || 'Not set'}\n`;
+            similarTasksContext += `   Type: ${task.payload.task_type || 'Not specified'}\n`;
+            if (task.payload.deadline) {
+              similarTasksContext += `   Deadline: ${task.payload.deadline}\n`;
+            }
+            similarTasksContext += `\n`;
+          }
+        });
+        
+        console.log(`Similar tasks context added to prompt: \n${similarTasksContext}`);
+      } else {
+        console.log('No similar tasks found or search failed');
+      }
+    } catch (searchError) {
+      console.error('Error searching for similar tasks:', searchError);
+      // Continue without similar tasks if search fails
+    }
+    
     // Construct message for Gemini
     const prompt = `
 I need you to analyze the following email and extract any tasks or action items that require follow-up.
@@ -166,6 +228,7 @@ Email Date: ${new Date(email.date * 1000).toLocaleString()}
 
 Email Body:
 ${email.body}
+${similarTasksContext}
 
 Return your response as a JSON object with two fields: "summary" and "tasks". The "summary" field should contain the summary text, and the "tasks" field should contain a JSON array of task objects.
 
@@ -204,6 +267,7 @@ Format your response ONLY as valid JSON with these fields, nothing else.
       tasks: parsedResponse.tasks,
       hasTaskErrors: parsedResponse.hasTaskErrors,
       taskErrors: parsedResponse.taskErrors || [],
+      similarTasks: similarTasksContext ? true : false,
       email: {
         id: email.id, // Include the email ID for client-side caching
         subject: email.subject,
