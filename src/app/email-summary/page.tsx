@@ -553,7 +553,39 @@ export default function EmailSummary() {
     }
   }, [currentIndex, navigateToEmail]);
 
-  // fetchProcessedEmail has been removed as it's no longer used - prefetchAdjacentEmails is used instead
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const fetchProcessedEmail = useCallback(async (index: number) => {
+    try {
+      setLoading(true);
+      
+      // Check if we have this email in the cache
+      if (cachedEmails[index]) {
+        console.log(`Using cached email for index ${index}`);
+        setEmailData(cachedEmails[index]);
+        return;
+      }
+      
+      // If not in cache, fetch it
+      const response = await fetch(`/api/nylas/process-email?index=${index}`);
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to fetch email data');
+      }
+      
+      const data = await response.json();
+      console.log(`Fetched email data for index ${index}:`, data);
+      
+      // Add to cache
+      setCachedEmails(prev => ({ ...prev, [index]: data }));
+      setEmailData(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred while fetching email data');
+      console.error(`Error fetching processed email:`, err);
+    } finally {
+      setLoading(false);
+    }
+  }, [cachedEmails]);
 
   if (loading && !emailData) {
     return (

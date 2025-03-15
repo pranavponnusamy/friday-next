@@ -127,7 +127,7 @@ interface QdrantPoint {
   id: string | number;
   version?: number;
   score?: number;
-  payload?: Record<string, unknown> | null;
+  payload?: Record<string, unknown>;
   vector?: unknown;
 }
 
@@ -189,9 +189,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       if (similarTasksResult && similarTasksResult.success && similarTasksResult.tasks && Array.isArray(similarTasksResult.tasks)) {
         similarTasksContext = 'Previously created tasks that might be similar:\n\n';
         
-        // Use type assertion to handle the response data structure
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        similarTasksResult.tasks.forEach((task: any, index: number) => {
+        // Cast to any to avoid TypeScript errors while still getting the task properties
+        similarTasksResult.tasks.forEach((task, index) => {
           console.log(`Task ${index + 1}:`);
           console.log(`  ID: ${task.id}`);
           console.log(`  Score: ${task.score || 'N/A'}`);
