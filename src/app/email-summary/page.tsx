@@ -34,6 +34,7 @@ interface ProcessedEmailResponse {
   error?: string;
   hasTaskErrors?: boolean;
   taskErrors?: string[];
+  hasSchedulingRequest?: boolean; // Add this flag
 }
 
 interface Calendar {
@@ -478,6 +479,94 @@ export default function EmailSummary() {
     }
   };
 
+  // Function to handle scheduling a meeting from email
+  const handleScheduleMeeting = async () => {
+    if (!selectedCalendarId) {
+      setCalendarError('Please select a calendar first');
+      return;
+    }
+    
+    if (!emailData) return;
+    
+    try {
+      setCalendarError(null);
+      setCalendarSuccess(null);
+      
+      // First, find available time slots based on calendars to consider
+      const response = await fetch('/api/nylas/create-calendar-event', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          task: {
+            description: `Meeting: ${emailData.email.subject}`,
+            task_type: "meeting_scheduling",
+            priority: 3,
+            context: `Meeting requested in email from ${emailData.email.from[0].name}`,
+            duration: 30 // Default to 30 minutes
+          },
+          calendarId: selectedCalendarId,
+          timePreference: timePreference,
+          calendarsToConsider: calendarsToConsider.length > 0 ? calendarsToConsider : undefined
+        }),
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to find available time slots');
+      }
+      
+      const eventData = await response.json();
+      console.log("Event data received:", eventData);
+      
+      // Check if the event data has the expected structure
+      if (!eventData || !eventData.success || !eventData.event) {
+        throw new Error('Received invalid event data from the server');
+      }
+      
+      // Get the formatted start and end times from the response
+      const startTimeStr = eventData.event.formattedStartTime || 'Not specified';
+      const endTimeStr = eventData.event.formattedEndTime || 'Not specified';
+      const eventTitle = eventData.event.data?.title || 'Meeting';
+      
+      // Send a reply email with the scheduled meeting time
+      const replyResponse = await fetch('/api/nylas/send-email', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          subject: `Re: ${emailData.email.subject}`,
+          body: `
+            <p>I've scheduled a meeting as requested:</p>
+            <p><strong>When:</strong> ${startTimeStr} - ${endTimeStr}</p>
+            <p><strong>Title:</strong> ${eventTitle}</p>
+            <p>Looking forward to our discussion.</p>
+          `,
+          to: [emailData.email.from[0]],
+          replyToMessageId: emailData.email.id
+        }),
+      });
+      
+      if (!replyResponse.ok) {
+        const errorData = await replyResponse.json();
+        throw new Error(errorData.error || 'Failed to send reply email');
+      }
+      
+      setCalendarSuccess(`Meeting scheduled and confirmation email sent to ${emailData.email.from[0].name}`);
+      
+      // Clear success message after 5 seconds
+      setTimeout(() => {
+        setCalendarSuccess(null);
+      }, 5000);
+    } catch (err) {
+      console.error("Error scheduling meeting:", err);
+      const errorMessage = err instanceof Error ? err.message : 'Failed to schedule meeting';
+      setCalendarError(errorMessage);
+    }
+  };
+
   // Fetch available calendars
   useEffect(() => {
     const fetchCalendars = async () => {
@@ -807,6 +896,51 @@ export default function EmailSummary() {
                   <h3 className="text-lg font-semibold mb-2 text-indigo-800 border-b border-indigo-200 pb-1">Tasks</h3>
                   {renderTasks()}
                 </div>
+                
+                {/* Meeting Scheduling Button - only show if email mentions scheduling */}
+                {emailData && emailData.hasSchedulingRequest && (
+                  <div className="mb-6 p-4 bg-indigo-50 border border-indigo-200 rounded-md">
+                    <h3 className="text-lg font-semibold mb-2 text-indigo-800">Meeting Request Detected</h3>
+                    <p className="text-indigo-700 mb-4">
+                      This email appears to be requesting to schedule a meeting. Would you like to schedule it based on your calendar availability?
+                    </p>
+                    
+                    {!calendarSectionExpanded && (
+                      <div className="mb-4">
+                        <button
+                          onClick={() => setCalendarSectionExpanded(true)}
+                          className="px-3 py-1.5 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 mr-2"
+                        >
+                          Show Calendar Options
+                        </button>
+                      </div>
+                    )}
+                    
+                    <button
+                      onClick={handleScheduleMeeting}
+                      disabled={!selectedCalendarId || calendarLoading}
+                      className={`px-4 py-2 rounded-md ${
+                        !selectedCalendarId || calendarLoading
+                          ? 'bg-gray-300 text-gray-700 cursor-not-allowed'
+                          : 'bg-green-600 hover:bg-green-700 text-white'
+                      } transition-colors focus:outline-none focus:ring-2 focus:ring-green-500`}
+                    >
+                      Schedule Meeting & Reply
+                    </button>
+                    
+                    {calendarError && (
+                      <div className="mt-2 p-2 bg-red-50 text-red-700 rounded-md border border-red-200">
+                        {calendarError}
+                      </div>
+                    )}
+                    
+                    {calendarSuccess && (
+                      <div className="mt-2 p-2 bg-green-50 text-green-700 rounded-md border border-green-200">
+                        {calendarSuccess}
+                      </div>
+                    )}
+                  </div>
+                )}
                 
                 {/* Show/Hide Original Email Toggle */}
                 <div className="border-t pt-4">

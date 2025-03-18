@@ -62,6 +62,7 @@ interface ParsedResponse {
   valid: boolean;
   summary?: string;
   tasks?: Task[];
+  hasSchedulingRequest?: boolean;
   error?: string;
   rawResponse?: string;
   hasTaskErrors?: boolean;
@@ -92,6 +93,11 @@ function parseCombinedResponse(responseText: string): ParsedResponse {
       };
     }
     
+    // Check for hasSchedulingRequest field
+    const hasSchedulingRequest = typeof response.hasSchedulingRequest === 'boolean' 
+      ? response.hasSchedulingRequest 
+      : false;
+    
     // Validate each task
     const validTasks: Task[] = [];
     const errors: string[] = [];
@@ -109,6 +115,7 @@ function parseCombinedResponse(responseText: string): ParsedResponse {
       valid: true,
       summary: response.summary,
       tasks: validTasks,
+      hasSchedulingRequest,
       hasTaskErrors: errors.length > 0,
       taskErrors: errors
     };
@@ -249,7 +256,11 @@ Email Body:
 ${email.body}
 ${similarTasksContext}
 
-Return your response as a JSON object with two fields: "summary" and "tasks". The "summary" field should contain the summary text, and the "tasks" field should contain a JSON array of task objects.
+Return your response as a JSON object with three fields: "summary", "tasks", and "hasSchedulingRequest". 
+
+The "summary" field should contain the summary text.
+The "tasks" field should contain a JSON array of task objects.
+The "hasSchedulingRequest" field should be a boolean (true/false) indicating whether the email specifically mentions scheduling or setting up a meeting.
 
 Each task object should have the following properties:
 - description: A clear, concise description of what needs to be done
@@ -286,6 +297,7 @@ Format your response ONLY as valid JSON with these fields, nothing else.
       tasks: parsedResponse.tasks,
       hasTaskErrors: parsedResponse.hasTaskErrors,
       taskErrors: parsedResponse.taskErrors || [],
+      hasSchedulingRequest: parsedResponse.hasSchedulingRequest || false,
       similarTasks: similarTasksContext ? true : false,
       email: {
         id: email.id, // Include the email ID for client-side caching

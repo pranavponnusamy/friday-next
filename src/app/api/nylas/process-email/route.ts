@@ -84,6 +84,18 @@ interface ProcessedEmailResponse {
   hasTaskErrors?: boolean;
   taskErrors?: string[];
   rawResponse?: string;
+  hasSchedulingRequest?: boolean; // Add this flag to indicate if email mentions scheduling a meeting
+}
+
+interface ParsedResponse {
+  valid: boolean;
+  summary?: string;
+  tasks?: Task[];
+  error?: string;
+  rawResponse?: string;
+  hasTaskErrors?: boolean;
+  taskErrors?: string[];
+  hasSchedulingRequest?: boolean; // Add this flag here too
 }
 
 // Simplified task validation
@@ -113,16 +125,6 @@ function validateTask(task: unknown): TaskValidationResult {
   return { valid: true };
 }
 
-interface ParsedResponse {
-  valid: boolean;
-  summary?: string;
-  tasks?: Task[];
-  error?: string;
-  rawResponse?: string;
-  hasTaskErrors?: boolean;
-  taskErrors?: string[];
-}
-
 // Parse combined summary and tasks from JSON response
 function parseCombinedResponse(responseText: string): ParsedResponse {
   try {
@@ -147,6 +149,11 @@ function parseCombinedResponse(responseText: string): ParsedResponse {
       };
     }
     
+    // Check for hasSchedulingRequest field
+    const hasSchedulingRequest = typeof response.hasSchedulingRequest === 'boolean' 
+      ? response.hasSchedulingRequest 
+      : false;
+    
     // Validate each task
     const validTasks: Task[] = [];
     const errors: string[] = [];
@@ -164,6 +171,7 @@ function parseCombinedResponse(responseText: string): ParsedResponse {
       valid: true,
       summary: response.summary,
       tasks: validTasks,
+      hasSchedulingRequest,
       hasTaskErrors: errors.length > 0,
       taskErrors: errors
     };
@@ -251,9 +259,10 @@ async function processEmailWithAI(email: NylasEmail): Promise<ParsedResponse> {
   try {
     // Construct message for Gemini
     const prompt = `
-I need you to analyze the following email and provide two things:
+I need you to analyze the following email and provide three things:
 1. A short, concise summary of the email (3-5 sentences max)
 2. Extract any tasks or action items that require follow-up
+3. Determine if the email mentions scheduling or setting up a meeting (return as boolean)
 
 Email Subject: ${email.subject}
 Email From: ${email.from && email.from[0] ? `${email.from[0].name} <${email.from[0].email}>` : 'Unknown Sender'}
@@ -262,7 +271,11 @@ Email Date: ${new Date(email.date * 1000).toLocaleString()}
 Email Body:
 ${email.body}
 
-Return your response as a JSON object with two fields: "summary" and "tasks". The "summary" field should contain the summary text, and the "tasks" field should contain a JSON array of task objects.
+Return your response as a JSON object with three fields: "summary", "tasks", and "hasSchedulingRequest". 
+
+The "summary" field should contain the summary text.
+The "tasks" field should contain a JSON array of task objects.
+The "hasSchedulingRequest" field should be a boolean (true/false) indicating whether the email specifically mentions scheduling or setting up a meeting.
 
 Each task object should have the following properties:
 - description: A clear, concise description of what needs to be done
@@ -433,6 +446,7 @@ export async function GET(request: NextRequest) {
         tasks: parsedResponse.tasks || [],
         hasTaskErrors: parsedResponse.hasTaskErrors,
         taskErrors: parsedResponse.taskErrors || [],
+        hasSchedulingRequest: parsedResponse.hasSchedulingRequest || false,
         currentIndex: safeIndex,
         totalEmails: emails.length
       };
