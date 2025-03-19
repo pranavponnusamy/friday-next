@@ -34,7 +34,8 @@ interface ProcessedEmailResponse {
   error?: string;
   hasTaskErrors?: boolean;
   taskErrors?: string[];
-  hasSchedulingRequest?: boolean; // Add this flag
+  hasSchedulingRequest?: boolean;
+  suggestedMeetingDate?: string; // Add suggestedMeetingDate field
 }
 
 interface Calendar {
@@ -492,6 +493,17 @@ export default function EmailSummary() {
       setCalendarError(null);
       setCalendarSuccess(null);
       
+      // Use suggested meeting date if available
+      const suggestedDate = emailData.suggestedMeetingDate ? 
+        new Date(emailData.suggestedMeetingDate) : undefined;
+      
+      // Calculate startTime and duration based on suggested date if available
+      let startTime = undefined;
+      if (suggestedDate && !isNaN(suggestedDate.getTime())) {
+        // Convert to Unix timestamp (seconds)
+        startTime = Math.floor(suggestedDate.getTime() / 1000);
+      }
+      
       // First, find available time slots based on calendars to consider
       const response = await fetch('/api/nylas/create-calendar-event', {
         method: 'POST',
@@ -504,11 +516,13 @@ export default function EmailSummary() {
             task_type: "meeting_scheduling",
             priority: 3,
             context: `Meeting requested in email from ${emailData.email.from[0].name}`,
-            duration: 30 // Default to 30 minutes
+            duration: 30, // Default to 30 minutes
+            deadline: suggestedDate ? emailData.suggestedMeetingDate?.split(' ')[0] : undefined // Use suggested date if available
           },
           calendarId: selectedCalendarId,
           timePreference: timePreference,
-          calendarsToConsider: calendarsToConsider.length > 0 ? calendarsToConsider : undefined
+          calendarsToConsider: calendarsToConsider.length > 0 ? calendarsToConsider : undefined,
+          preferredStartTime: startTime // Pass the suggested time to the API
         }),
       });
       
@@ -904,6 +918,12 @@ export default function EmailSummary() {
                     <p className="text-indigo-700 mb-4">
                       This email appears to be requesting to schedule a meeting. Would you like to schedule it based on your calendar availability?
                     </p>
+                    
+                    {emailData.suggestedMeetingDate && (
+                      <p className="text-indigo-700 mb-4">
+                        <strong>Suggested Date:</strong> {emailData.suggestedMeetingDate}
+                      </p>
+                    )}
                     
                     {!calendarSectionExpanded && (
                       <div className="mb-4">

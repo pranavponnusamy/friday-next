@@ -63,6 +63,7 @@ interface ParsedResponse {
   summary?: string;
   tasks?: Task[];
   hasSchedulingRequest?: boolean;
+  suggestedMeetingDate?: string;
   error?: string;
   rawResponse?: string;
   hasTaskErrors?: boolean;
@@ -98,6 +99,11 @@ function parseCombinedResponse(responseText: string): ParsedResponse {
       ? response.hasSchedulingRequest 
       : false;
     
+    // Check for suggestedMeetingDate field
+    const suggestedMeetingDate = typeof response.suggestedMeetingDate === 'string' 
+      ? response.suggestedMeetingDate 
+      : undefined;
+    
     // Validate each task
     const validTasks: Task[] = [];
     const errors: string[] = [];
@@ -116,6 +122,7 @@ function parseCombinedResponse(responseText: string): ParsedResponse {
       summary: response.summary,
       tasks: validTasks,
       hasSchedulingRequest,
+      suggestedMeetingDate,
       hasTaskErrors: errors.length > 0,
       taskErrors: errors
     };
@@ -246,7 +253,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     
     // Construct message for Gemini
     const prompt = `
-I need you to analyze the following email and extract any tasks or action items that require follow-up.
+I need you to analyze the following email and extract two things:
+1. Extract any tasks or action items that require follow-up
+2. Determine if the email mentions scheduling or setting up a meeting (return as boolean)
 
 Email Subject: ${email.subject}
 Email From: ${email.from[0].name} <${email.from[0].email}>
@@ -256,18 +265,18 @@ Email Body:
 ${email.body}
 ${similarTasksContext}
 
-Return your response as a JSON object with three fields: "summary", "tasks", and "hasSchedulingRequest". 
-
-The "summary" field should contain the summary text.
-The "tasks" field should contain a JSON array of task objects.
-The "hasSchedulingRequest" field should be a boolean (true/false) indicating whether the email specifically mentions scheduling or setting up a meeting.
+Return your response as a JSON object with the following fields:
+- "summary": A summary of the email content
+- "tasks": An array of task objects (can be empty if no tasks found)
+- "hasSchedulingRequest": A boolean (true/false) indicating if the email mentions scheduling a meeting
+- "suggestedMeetingDate": If hasSchedulingRequest is true, suggest a potential date and time for the meeting based on the email content. Format it as YYYY-MM-DD HH:MM. If no specific date/time is mentioned, provide a reasonable suggestion based on context. If hasSchedulingRequest is false, set this to null.
 
 Each task object should have the following properties:
 - description: A clear, concise description of what needs to be done
-- deadline: When the task needs to be completed by (or null if not specified)
+- deadline: When the task needs to be completed by (in YYYY-MM-DD format, or null if not specified)
 - task_type: The type of task, must be one of ["meeting_scheduling", "reminder", "to_do_item"]
 - priority: A priority level from 1-5, where 5 is highest priority. Make sure that the priority is always super low unless it's a super pressing and time sensitive event. Most tasks should be 1 or 2.
-- context: Any additional relevant context for the task (meeting links, etc.)
+- context: Any additional relevant context for the task
 
 Format your response ONLY as valid JSON with these fields, nothing else.
 `;
@@ -298,6 +307,7 @@ Format your response ONLY as valid JSON with these fields, nothing else.
       hasTaskErrors: parsedResponse.hasTaskErrors,
       taskErrors: parsedResponse.taskErrors || [],
       hasSchedulingRequest: parsedResponse.hasSchedulingRequest || false,
+      suggestedMeetingDate: parsedResponse.suggestedMeetingDate || undefined,
       similarTasks: similarTasksContext ? true : false,
       email: {
         id: email.id, // Include the email ID for client-side caching

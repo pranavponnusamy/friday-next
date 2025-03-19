@@ -84,7 +84,8 @@ interface ProcessedEmailResponse {
   hasTaskErrors?: boolean;
   taskErrors?: string[];
   rawResponse?: string;
-  hasSchedulingRequest?: boolean; // Add this flag to indicate if email mentions scheduling a meeting
+  hasSchedulingRequest?: boolean;
+  suggestedMeetingDate?: string;
 }
 
 interface ParsedResponse {
@@ -95,7 +96,8 @@ interface ParsedResponse {
   rawResponse?: string;
   hasTaskErrors?: boolean;
   taskErrors?: string[];
-  hasSchedulingRequest?: boolean; // Add this flag here too
+  hasSchedulingRequest?: boolean;
+  suggestedMeetingDate?: string;
 }
 
 // Simplified task validation
@@ -154,6 +156,11 @@ function parseCombinedResponse(responseText: string): ParsedResponse {
       ? response.hasSchedulingRequest 
       : false;
     
+    // Check for suggestedMeetingDate field
+    const suggestedMeetingDate = typeof response.suggestedMeetingDate === 'string' 
+      ? response.suggestedMeetingDate 
+      : undefined;
+    
     // Validate each task
     const validTasks: Task[] = [];
     const errors: string[] = [];
@@ -172,6 +179,7 @@ function parseCombinedResponse(responseText: string): ParsedResponse {
       summary: response.summary,
       tasks: validTasks,
       hasSchedulingRequest,
+      suggestedMeetingDate,
       hasTaskErrors: errors.length > 0,
       taskErrors: errors
     };
@@ -259,10 +267,11 @@ async function processEmailWithAI(email: NylasEmail): Promise<ParsedResponse> {
   try {
     // Construct message for Gemini
     const prompt = `
-I need you to analyze the following email and provide three things:
+I need you to analyze the following email and provide these things:
 1. A short, concise summary of the email (3-5 sentences max)
 2. Extract any tasks or action items that require follow-up
 3. Determine if the email mentions scheduling or setting up a meeting (return as boolean)
+4. If scheduling a meeting is mentioned, suggest a potential date and time
 
 Email Subject: ${email.subject}
 Email From: ${email.from && email.from[0] ? `${email.from[0].name} <${email.from[0].email}>` : 'Unknown Sender'}
@@ -271,11 +280,12 @@ Email Date: ${new Date(email.date * 1000).toLocaleString()}
 Email Body:
 ${email.body}
 
-Return your response as a JSON object with three fields: "summary", "tasks", and "hasSchedulingRequest". 
+Return your response as a JSON object with four fields: "summary", "tasks", "hasSchedulingRequest", and "suggestedMeetingDate". 
 
 The "summary" field should contain the summary text.
 The "tasks" field should contain a JSON array of task objects.
 The "hasSchedulingRequest" field should be a boolean (true/false) indicating whether the email specifically mentions scheduling or setting up a meeting.
+The "suggestedMeetingDate" field should contain a potential date and time for the meeting if hasSchedulingRequest is true, formatted as YYYY-MM-DD HH:MM, or null if not applicable.
 
 Each task object should have the following properties:
 - description: A clear, concise description of what needs to be done
@@ -383,7 +393,7 @@ export async function GET(request: NextRequest) {
         
         // Return mock data if no emails found
         return NextResponse.json({ 
-          email: mockEmails[index % mockEmails.length],
+          email: mockEmails[0],
           summary: "This is a mock email summary since no real emails were found.",
           tasks: [{
             description: "Connect your email account properly",
@@ -447,6 +457,7 @@ export async function GET(request: NextRequest) {
         hasTaskErrors: parsedResponse.hasTaskErrors,
         taskErrors: parsedResponse.taskErrors || [],
         hasSchedulingRequest: parsedResponse.hasSchedulingRequest || false,
+        suggestedMeetingDate: parsedResponse.suggestedMeetingDate,
         currentIndex: safeIndex,
         totalEmails: emails.length
       };

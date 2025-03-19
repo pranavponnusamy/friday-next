@@ -45,6 +45,7 @@ interface CreateCalendarEventRequest {
     label: string;
   };
   calendarsToConsider?: string[]; // Optional list of calendar IDs to consider
+  preferredStartTime?: number; // Optional specific start time (Unix timestamp)
 }
 
 // Define the CreateEventRequestWithColor type to include the color property
@@ -451,7 +452,7 @@ async function findNextAvailableSlot(
 export async function POST(request: NextRequest) {
   try {
     // Parse request body
-    const { task, calendarId, email, timePreference, calendarsToConsider } = await request.json();
+    const { task, calendarId, email, timePreference, calendarsToConsider, preferredStartTime } = await request.json();
     
     // DEBUGGING - log all request data
     console.log("Calendar event creation request received:");
@@ -461,6 +462,7 @@ export async function POST(request: NextRequest) {
     console.log("- Time preference:", timePreference);
     console.log("- Calendars to consider:", calendarsToConsider);
     console.log("- Task duration:", task.duration || 60, "minutes");
+    console.log("- Preferred start time:", preferredStartTime ? new Date(preferredStartTime * 1000).toISOString() : 'Not specified');
     
     // Type guard to ensure task has the right shape
     if (!task || typeof task !== 'object') {
@@ -532,8 +534,14 @@ export async function POST(request: NextRequest) {
     
     console.log(`Using task duration: ${durationMinutes} minutes`);
     
-    // Check if the task has a deadline
-    if (task.deadline) {
+    // If a specific preferred start time is provided, use that
+    if (preferredStartTime && typeof preferredStartTime === 'number') {
+      console.log(`Using provided preferred start time: ${new Date(preferredStartTime * 1000).toLocaleString()}`);
+      startTime = preferredStartTime;
+      endTime = startTime + (durationMinutes * 60);
+    }
+    // Otherwise, check if the task has a deadline
+    else if (task.deadline) {
       try {
         // Try to parse deadline as a date string
         // When a date is specified without a time, JavaScript interprets it as midnight UTC
