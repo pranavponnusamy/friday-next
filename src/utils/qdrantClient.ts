@@ -29,7 +29,7 @@ export const getGeminiEmbeddingModel = () => {
 };
 
 // Collection name
-export const TASKS_COLLECTION = "friday_tasks";
+export const TASKS_COLLECTION = "saturday_tasks";
 
 // Vector dimensions from Gemini embedding model
 export const VECTOR_SIZE = 3072; // Gemini embedding-exp model produces 3072-dimensional vectors

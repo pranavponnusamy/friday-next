@@ -11,7 +11,7 @@ export default async function Home() {
     <div className="flex flex-col min-h-screen bg-gray-50">
       <div className="w-full px-4 py-8">
         <div className="bg-white p-8 rounded-lg shadow-md max-w-3xl mx-auto">
-          <h1 className="text-3xl font-bold text-indigo-700 mb-6 text-center">Friday</h1>
+          <h1 className="text-3xl font-bold text-indigo-700 mb-6 text-center">Saturday</h1>
           
           <div className="text-center mb-10">
             <p className="text-lg text-gray-700 mb-6">

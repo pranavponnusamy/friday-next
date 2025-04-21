@@ -24,7 +24,7 @@ export async function GET() {
     const authUrl = nylas.auth.urlForOAuth2({
       clientId: clientId,
       redirectUri: process.env.NODE_ENV === 'production' 
-        ? 'https://friday-next-pink.vercel.app/api/nylas/callback'
+        ? 'https://saturday-next-pink.vercel.app/api/nylas/callback'
         : 'http://localhost:3000/api/nylas/callback',
       scope: ['email.read_only', 'email.drafts', 'calendar', 'contacts'],
     });

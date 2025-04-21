@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
       clientSecret: process.env.NYLAS_API_KEY || '',
       code,
       redirectUri: process.env.NODE_ENV === 'production' 
-        ? 'https://friday-next-pink.vercel.app/api/nylas/callback'
+        ? 'https://saturday-next-pink.vercel.app/api/nylas/callback'
         : 'http://localhost:3000/api/nylas/callback',
     });
     

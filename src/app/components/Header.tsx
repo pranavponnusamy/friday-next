@@ -105,7 +105,7 @@ export default function Header() {
           <div className="flex">
             <div className="flex-shrink-0 flex items-center">
               <Link href="/" className="text-xl font-bold text-indigo-600">
-                Friday
+                Saturday
               </Link>
             </div>
             <nav className="ml-6 flex space-x-4">

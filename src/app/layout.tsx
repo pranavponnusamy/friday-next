@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Friday",
+  title: "Saturday",
   description: "Extract tasks from your emails and schedule them on your calendar with AI assistance",
 };
 

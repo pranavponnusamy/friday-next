@@ -200,7 +200,7 @@ const mockEmails: NylasEmail[] = [
     subject: 'Project Deadline Update',
     from: [{ email: 'manager@example.com', name: 'Project Manager' }],
     date: Math.floor(Date.now() / 1000),
-    body: '<p>Hello team,</p><p>This is a reminder that our project deadline has been moved up to next Friday. Please make sure all deliverables are ready by Thursday EOD for final review.</p><p>Best regards,<br>Project Manager</p>'
+    body: '<p>Hello team,</p><p>This is a reminder that our project deadline has been moved up to next Saturday. Please make sure all deliverables are ready by Friday EOD for final review.</p><p>Best regards,<br>Project Manager</p>'
   },
   {
     id: 'mock-2',
@@ -346,8 +346,8 @@ export async function GET(request: NextRequest) {
       const mockSummary = "This email is a reminder about an upcoming deadline or meeting.";
       const mockTasks = [
         {
-          description: "Prepare deliverables by Thursday EOD",
-          deadline: "Thursday EOD",
+          description: "Prepare deliverables by Friday EOD",
+          deadline: "Friday EOD",
           task_type: "to_do_item",
           priority: 5,
           context: "For final project review",
