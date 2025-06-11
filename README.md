@@ -1,3 +1,14 @@
+# friday
+Remake Friday.so
+
+Features
+1. Integrated login with Nylas
+2. Email summarization
+3. Task suggestions based on email content, including estimated time and dependencies
+4. Suggest automatic replies to emails
+
+
+
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
 ## Getting Started
